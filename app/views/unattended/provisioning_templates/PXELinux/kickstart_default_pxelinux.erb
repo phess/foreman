@@ -1,6 +1,7 @@
 <%#
 kind: PXELinux
 name: Kickstart default PXELinux
+model: ProvisioningTemplate
 oses:
 - CentOS
 - Fedora
@@ -49,20 +50,25 @@ oses:
 
   # optional repository for Atomic
   if @host.operatingsystem.name.match(/Atomic/i)
-    options.push("inst.repo=#{@host.operatingsystem.medium_uri(@host)}")
+    options.push("inst.repo=#{medium_uri}")
   end
-  
-  if @host.params['blacklist']
-    options.push("modprobe.blacklist=" + @host.params['blacklist'].gsub(' ', ''))
+
+  if @host.operatingsystem.name.match(/Atomic/i) || host_param('kickstart_liveimg')
+    options.push('inst.stage2=' + @host.operatingsystem.medium_uri(@host).to_s)
   end
 
   ksoptions = options.join(' ')
+  timeout = host_param('loader_timeout').to_i * 10
+  timeout = 100 if timeout.nil? || timeout <= 0
 -%>
 
-TIMEOUT <%= @host.params['loader_timeout'] || 10 %>
-DEFAULT <%= template_name %>
+DEFAULT menu
+MENU TITLE Booting into OS installer (ESC to stop)
+TIMEOUT <%= timeout %>
+ONTIMEOUT installer
 
-LABEL <%= template_name %>
+LABEL installer
+  MENU LABEL <%= template_name %>
   KERNEL <%= @kernel %>
   APPEND initrd=<%= @initrd %> ks=<%= foreman_url('provision') %> <%= pxe_kernel_options %> <%= ksoptions %>
   IPAPPEND 2

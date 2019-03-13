@@ -1,63 +1,96 @@
-jest.unmock('./ChartBox');
-jest.unmock('../../../services/ChartService');
-
+import toJson from 'enzyme-to-json';
+import { shallow } from 'enzyme';
 import React from 'react';
-import { mount } from 'enzyme';
 import ChartBox from './ChartBox';
-global.patternfly = {
-  pfSetDonutChartTitle: jest.fn()
-};
+import { classFunctionUnitTest } from '../../common/testHelpers';
+
+jest.unmock('../../../services/charts/DonutChartService');
+jest.unmock('./ChartBox');
 
 describe('ChartBox', () => {
-  let chart, noDataMsg, errorText;
-
-  beforeEach(() => {
-    chart = {
-      id: '2'
-    };
-    noDataMsg = 'no data';
-    errorText = 'some error';
-  });
-
-  it('pending', () => {
-    const box = mount(
+  const setup = ({ status, chart = { id: '2' } }) =>
+    shallow(
       <ChartBox
+        type="donut"
         chart={chart}
-        noDataMsg={noDataMsg}
-        status={'PENDING'}
-        errorText={errorText}
+        noDataMsg="no data"
+        status="PENDING"
+        errorText="some error"
+        title="some title"
+        tip="sone tooltip"
         {...chart}
       />
     );
 
-    expect(box.find('.spinner.spinner-lg').length).toBe(1);
+  it('pending', () => {
+    const box = setup({ status: 'PENDING' });
+
+    expect(toJson(box)).toMatchSnapshot();
   });
 
   it('error', () => {
-    const box = mount(
-      <ChartBox
-        chart={chart}
-        noDataMsg={noDataMsg}
-        status={'ERROR'}
-        errorText={errorText}
-        {...chart}
-      />
-    );
+    const box = setup({ status: 'ERROR' });
 
-    expect(box.find('.pficon.pficon-error-circle-o').length).toBe(1);
+    expect(toJson(box)).toMatchSnapshot();
   });
 
   it('resolved', () => {
-    const box = mount(
+    const box = setup({
+      chart: { id: '2', data: [[1, 2]] },
+      status: 'RESOLVED',
+    });
+
+    expect(toJson(box)).toMatchSnapshot();
+  });
+
+  it('render modal', () => {
+    const box = setup({
+      chart: { id: '2', data: [[1, 2]] },
+      status: 'RESOLVED',
+    });
+    expect(box.find('Modal')).toHaveLength(0);
+    box.setState({ showModal: true });
+    expect(box.find('Modal')).toHaveLength(1);
+  });
+  it('shouldComponentUpdate should be called', () => {
+    const shouldUpdateSpy = jest.spyOn(
+      ChartBox.prototype,
+      'shouldComponentUpdate'
+    );
+    const box = shallow(
       <ChartBox
-        chart={{ data: [[1, 2]] }}
-        noDataMsg={noDataMsg}
-        status={'RESOLVED'}
-        errorText={errorText}
-        {...chart}
+        id="4"
+        type="donut"
+        chart={{ id: '4', data: undefined }}
+        status="PENDING"
       />
     );
+    box.setProps({ status: 'PENDING' });
+    expect(shouldUpdateSpy).toHaveBeenCalled();
+  });
+  it('shouldComponentUpdate', () => {
+    const objThis = {
+      state: { showModal: false },
+      props: { chart: { data: [1, 2] } },
+    };
 
-    expect(box.find('.c3-statistics-pie.small').length).toBe(1);
+    expect(
+      classFunctionUnitTest(ChartBox, 'shouldComponentUpdate', objThis, [
+        { chart: { data: [1, 2] } },
+        { showModal: false },
+      ])
+    ).toBe(false);
+    expect(
+      classFunctionUnitTest(ChartBox, 'shouldComponentUpdate', objThis, [
+        { chart: { data: [1, 1] } },
+        { showModal: false },
+      ])
+    ).toBe(true);
+    expect(
+      classFunctionUnitTest(ChartBox, 'shouldComponentUpdate', objThis, [
+        { chart: { data: [1, 2] } },
+        { showModal: true },
+      ])
+    ).toBe(true);
   });
 });

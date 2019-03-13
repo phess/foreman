@@ -138,17 +138,6 @@ select {
   padding: initial;
 }
 
-.inputs-list {
-  display: inline;
-  list-style: none;
-  margin-bottom: 18px;
-  margin-left: 0;
-}
-
-.collapse .inputs-list li {
-  margin-left: 20px;
-}
-
 .delete {
   color: #b94a48 !important;
   cursor: pointer;
@@ -162,6 +151,10 @@ select {
 .descendants {
   color: #444 !important;
   cursor: auto;
+}
+
+#main > #content {
+  display: none;
 }
 
 .used_by_hosts {
@@ -202,6 +195,18 @@ select {
 
 #title_action {
   padding-bottom: 12px;
+}
+
+.breadcrumb-line {
+  margin-top: -15px;
+  margin-right: -60px;
+  margin-left: -60px;
+}
+
+.breadcrumb-switcher {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 10px;
 }
 
 .grey,
@@ -271,11 +276,6 @@ table {
   white-space: nowrap;
 }
 
-.diff-modal {
-  height: 520px;
-  width: 720px;
-}
-
 .modal-body {
   max-height: 800px;
 }
@@ -286,14 +286,17 @@ table {
 }
 
 .console-screen {
-  border: solid #222 1px;
-  border-radius: 10px;
-  box-shadow: 5px 5px 5px rgba(0, 0, 0, 0.2);
-  display: inline-block;
-  margin-top: 18px;
+  box-shadow: 0 5px 5px rgba(0, 0, 0, 0.2);
+  display: table;
   min-height: 400px;
   min-width: 720px;
-  padding: 10px;
+  top: 18px;
+  margin: 18px auto;
+  position: relative;
+
+  > canvas {
+    float: left;
+  }
 }
 
 .ellipsis {
@@ -318,9 +321,9 @@ table {
 }
 
 .exit-fullscreen {
-  position: absolute;
-  right: 30px;
-  top: 30px;
+  position: fixed;
+  right: 20px;
+  top: 80px;
 }
 
 .config_group,
@@ -334,8 +337,10 @@ table {
   vertical-align: bottom;
 }
 
-#pagination {
-  margin-top: -6px;
+.audits-pagination {
+  margin-top: -15px !important;
+  margin-bottom: 10px;
+  border-top: 1px solid #d1d1d1 !important;
 }
 
 #interfaceModal {
@@ -478,9 +483,9 @@ table {
 }
 
 .fullscreen {
-  height: 100vh !important;
-  position: fixed !important;
-  width: 100vw !important;
+  height: 90vh !important;
+  width: 100%;
+  margin-top: 20px;
   font-family: monospace;
 }
 
@@ -556,7 +561,7 @@ table {
   div {
     height: 20px;
     margin-left: 15px;
-    margin-top: 2px;
+    margin-top: 15px;
     width: 20px;
   }
 }
@@ -660,4 +665,10 @@ code.transparent {
 .factsTable .breadcrumb {
   padding: 0;
   margin-bottom: 0;
+}
+
+.scrollable-dropdown {
+  max-height: 400px;
+  overflow-y: auto;
+  max-width: 175px;
 }

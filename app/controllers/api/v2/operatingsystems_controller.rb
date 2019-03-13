@@ -25,11 +25,12 @@ module Api
       param :ptable_id, String, :desc => N_("ID of partition table")
       param :config_template_id, String, :desc => N_("ID of template")
       param :provisioning_template_id, String, :desc => N_("ID of template")
-      param :os_parameters_attributes, Array, :required => false, :desc => N_("Array of parameters")  do
+      param :os_parameters_attributes, Array, :required => false, :desc => N_("Array of parameters") do
         param :name, String, :desc => N_("Name of the parameter"), :required => true
         param :value, String, :desc => N_("Parameter value"), :required => true
       end
       param_group :search_and_pagination, ::Api::V2::BaseController
+      add_scoped_search_description_for(Operatingsystem)
 
       def index
         @operatingsystems = resource_scope_for_index
@@ -76,7 +77,7 @@ module Api
       param_group :operatingsystem
 
       def update
-        process_response @operatingsystem.update_attributes(operatingsystem_params)
+        process_response @operatingsystem.update(operatingsystem_params)
       end
 
       api :DELETE, "/operatingsystems/:id/", N_("Delete an operating system")
@@ -92,9 +93,14 @@ module Api
       param :architecture, String
 
       def bootfiles
+        Foreman::Deprecation.deprecation_warning("1.22", "Bootfiles should be calculated per host")
+
         medium = Medium.authorized(:view_media).find(params[:medium])
         arch   = Architecture.authorized(:view_architectures).find(params[:architecture])
-        render :json => @operatingsystem.pxe_files(medium, arch)
+        host_mock = Openstruct.new(operatingsystem: @operatingsystem, medium: medium, architecture: arch)
+        medium_provider = MediumProviders::Default.new(host_mock)
+
+        render :json => @operatingsystem.pxe_files(medium_provider)
       rescue => e
         render_message(e.to_s, :status => :unprocessable_entity)
       end

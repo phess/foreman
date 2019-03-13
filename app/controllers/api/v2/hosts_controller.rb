@@ -3,24 +3,29 @@ module Api
     class HostsController < V2::BaseController
       include Api::Version2
       include Api::CompatibilityChecker
-      include Api::TaxonomyScope
       include ScopesPerAction
       include Foreman::Controller::SmartProxyAuth
       include Foreman::Controller::Parameters::Host
       include ParameterAttributes
 
       wrap_parameters :host, :include => host_params_filter.accessible_attributes(parameter_filter_context) + ['compute_attributes']
+      include HostsControllerExtension
 
       before_action :check_create_host_nested, :only => [:create, :update]
 
       before_action :find_optional_nested_object, :except => [:facts]
       before_action :find_resource, :except => [:index, :create, :facts]
-      before_action :permissions_check, :only => %w{power boot puppetrun}
+      check_permissions_for %w{power boot}
       before_action :process_parameter_attributes, :only => %w{update}
 
       add_smart_proxy_filters :facts, :features => Proc.new { FactImporter.fact_features }
 
-      add_scope_for(:index) { |base_scope| base_scope.preload([:host_statuses, :compute_resource, :hostgroup, :operatingsystem, :interfaces, :token, :owner]) }
+      add_scope_for(:index) do |base_scope|
+        base_scope.preload([:host_statuses, :compute_resource, :hostgroup, :operatingsystem,
+                            :interfaces, :token, :owner, :model, :environment, :location,
+                            :organization, :image, :compute_profile, :realm, :architecture,
+                            :ptable, :medium, :puppet_proxy, :puppet_ca_proxy])
+      end
 
       api :GET, "/hosts/", N_("List all hosts")
       api :GET, "/hostgroups/:hostgroup_id/hosts", N_("List all hosts for a host group")
@@ -32,13 +37,15 @@ module Api
       param :location_id, String, :desc => N_("ID of location")
       param :organization_id, String, :desc => N_("ID of organization")
       param :environment_id, String, :desc => N_("ID of environment")
-      param :include, Array, :in => ['parameters', 'all_parameters'], :desc => N_("Array of extra information types to include")
+      param :include, ['parameters', 'all_parameters'], :desc => N_("Array of extra information types to include")
       param_group :search_and_pagination, ::Api::V2::BaseController
+      add_scoped_search_description_for(Host)
 
       def index
         @hosts = action_scope_for(:index, resource_scope_for_index)
 
         if params[:thin]
+          @subtotal = @hosts.total_entries
           @hosts = @hosts.reorder(:name).distinct.pluck(:id, :name)
           render 'thin'
           return
@@ -96,7 +103,7 @@ module Api
           end
           param :build, :bool
           param :enabled, :bool, :desc => N_("Include this host within Foreman reporting")
-          param :provision_method, String, :desc => N_("The method used to provision the host. Possible provision_methods may be %{provision_methods}") # values are defined in apipie initializer
+          param :provision_method, Host::Managed.provision_methods.keys, :desc => N_("The method used to provision the host.")
           param :managed, :bool, :desc => N_("True/False flag whether a host is managed or unmanaged. Note: this value also determines whether several parameters are required or not")
           param :progress_report_id, String, :desc => N_("UUID to track orchestration tasks status, GET /api/orchestration/:UUID/tasks")
           param :comment, String, :desc => N_("Additional information about this host")
@@ -108,10 +115,10 @@ module Api
           param :compute_attributes, Hash, :desc => N_("Additional compute resource specific attributes.")
 
           Facets.registered_facets.values.each do |facet_config|
-            next unless facet_config.api_param_group && facet_config.api_controller
+            next unless facet_config.host_configuration.api_param_group && facet_config.host_configuration.api_controller
             param "#{facet_config.name}_attributes".to_sym, Hash, :desc => facet_config.api_param_group_description || (N_("Parameters for host's %s facet") % facet_config.name) do
-              facet_config.load_api_controller
-              param_group facet_config.api_param_group, facet_config.api_controller
+              facet_config.host_configuration.load_api_controller
+              param_group facet_config.host_configuration.api_param_group, facet_config.host_configuration.api_controller
             end
           end
         end
@@ -149,7 +156,7 @@ module Api
         @all_parameters = true
 
         @host.attributes = host_attributes(host_params, @host)
-        apply_compute_profile(@host)
+        apply_compute_profile(@host) if (params[:host] && params[:host][:compute_attributes].present?) || @host.compute_profile_id_changed?
 
         process_response @host.save
       rescue InterfaceTypeMapper::UnknownTypeExeption => e
@@ -172,7 +179,7 @@ module Api
 
       api :GET, "/hosts/:id/status", N_("Get configuration status of host")
       param :id, :identifier_dottable, :required => true
-      description <<-eos
+      description <<-EOS
 Return value may either be one of the following:
 
 * Alerts disabled
@@ -182,7 +189,7 @@ Return value may either be one of the following:
 * Active
 * Pending
 * No changes
-      eos
+      EOS
 
       def status
         Foreman::Deprecation.api_deprecation_warning('The /status route is deprecated, please use the new /status/configuration instead')
@@ -191,12 +198,12 @@ Return value may either be one of the following:
 
       api :GET, "/hosts/:id/status/:type", N_("Get status of host")
       param :id, :identifier_dottable, :required => true
-      param :type, [ HostStatus::Global ] + HostStatus.status_registry.to_a.map { |s| s.humanized_name }, :required => true, :desc => N_(<<-eos
+      param :type, [ HostStatus::Global ] + HostStatus.status_registry.to_a.map { |s| s.humanized_name }, :required => true, :desc => N_(<<-EOS
 status type, can be one of
 * global
 * configuration
 * build
-eos
+EOS
 )
       description N_('Returns string representing a host status of a given type')
       def get_status
@@ -210,15 +217,15 @@ eos
 
       api :GET, "/hosts/:id/vm_compute_attributes", N_("Get vm attributes of host")
       param :id, :identifier_dottable, :required => true
-      description <<-eos
+      description <<-EOS
 Return the host's compute attributes that can be used to create a clone of this VM
-      eos
+      EOS
 
       def vm_compute_attributes
         render :json => {} unless @host
         attrs = @host.vm_compute_attributes || {}
         safe_attrs = {}
-        attrs.each_pair do |k,v|
+        attrs.each_pair do |k, v|
           # clean up the compute attributes to be suitable for output
           if v.is_a?(Proc)
             safe_attrs[k] = v.call
@@ -229,14 +236,6 @@ Return the host's compute attributes that can be used to create a clone of this 
           end
         end
         render :json => safe_attrs
-      end
-
-      api :PUT, "/hosts/:id/puppetrun", N_("Force a Puppet agent run on the host")
-      param :id, :identifier_dottable, :required => true
-
-      def puppetrun
-        return deny_access unless Setting[:puppetrun]
-        process_response @host.puppetrun!
       end
 
       api :PUT, "/hosts/:id/disassociate", N_("Disassociate the host from a VM")
@@ -263,6 +262,22 @@ Return the host's compute attributes that can be used to create a clone of this 
         end
       end
 
+      api :GET, '/hosts/:id/power', N_('Fetch the status of whether the host is powered on or not. Supported hosts are VMs and physical hosts with BMCs.')
+      param :id, :identifier_dottable, required: true
+
+      def power_status
+        render json: PowerManager::PowerStatus.new(host: @host).power_state
+      rescue => e
+        Foreman::Logging.exception("Failed to fetch power status", e)
+
+        resp = {
+          id: @host.id,
+          statusText: _("Failed to fetch power status: %s") % e
+        }
+
+        render json: resp.merge(PowerManager::PowerStatus::HOST_POWER[:na])
+      end
+
       api :PUT, "/hosts/:id/boot", N_("Boot host from specified device")
       param :id, :identifier_dottable, :required => true
       param :device, String, :required => true, :desc => N_("boot device, valid devices are disk, cdrom, pxe, bios")
@@ -285,8 +300,8 @@ Return the host's compute attributes that can be used to create a clone of this 
       param :type, String,     :desc => N_("optional: the STI type of host to create")
 
       def facts
-        @host = detect_host_type.import_host params[:name], params[:facts][:_type] || 'puppet', params[:certname], detected_proxy.try(:id)
-        state = @host.import_facts(params[:facts])
+        @host = detect_host_type.import_host params[:name], params[:certname]
+        state = @host.import_facts(params[:facts].to_unsafe_h, detected_proxy)
         process_response state
       rescue ::Foreman::Exception => e
         render_message(e.to_s, :status => :unprocessable_entity)
@@ -297,7 +312,7 @@ Return the host's compute attributes that can be used to create a clone of this 
       param :only, Array, :desc => N_("Limit rebuild steps, valid steps are %{host_rebuild_steps}")
       def rebuild_config
         result = @host.recreate_config(params[:only])
-        failures = result.reject { |key, value| value }.keys.map{ |k| _(k) }
+        failures = result.reject { |key, value| value }.keys.map { |k| _(k) }
         if failures.empty?
           render_message _("Configuration successfully rebuilt."), :status => :ok
         else
@@ -313,7 +328,7 @@ Return the host's compute attributes that can be used to create a clone of this 
         if template.nil?
           not_found(_("No template with kind %{kind} for %{host}") % {:kind => params[:kind], :host => @host.to_label})
         else
-          render :json => { :template => @host.render_template(template) }, :status => :ok
+          render :json => { :template => @host.render_template(template: template) }, :status => :ok
         end
       end
 
@@ -349,8 +364,8 @@ Return the host's compute attributes that can be used to create a clone of this 
 
       def action_permission
         case params[:action]
-          when 'puppetrun'
-            :puppetrun
+          when 'power_status'
+            :power
           when 'power'
             :power
           when 'boot'
@@ -363,6 +378,17 @@ Return the host's compute attributes that can be used to create a clone of this 
             :view
           when 'rebuild_config'
             :build
+          else
+            super
+        end
+      end
+
+      def parent_permission(child_permission)
+        case child_permission.to_s
+          when 'power', 'boot', 'console', 'vm_compute_attributes', 'get_status', 'template', 'enc', 'rebuild_config'
+            'view'
+          when 'disassociate'
+            'edit'
           else
             super
         end
@@ -400,7 +426,11 @@ Return the host's compute attributes that can be used to create a clone of this 
 
       def resource_class_join(association, scope)
         resource_class_join = resource_class.joins(association.name)
-        resource_class_join.merge(scope).present? ? resource_class_join.merge(scope) : resource_class_join
+        if action_name == 'update' && resource_class_join.merge(scope).blank?
+          resource_class_join
+        else
+          resource_class.joins(association.name).merge(scope)
+        end
       end
 
       def import_host

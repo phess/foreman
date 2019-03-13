@@ -15,7 +15,7 @@ function update_nics(success_callback) {
     data: data,
     complete: function(){},
     error: function(jqXHR, status, error){
-      $('#network').html(Jed.sprintf(__("Error loading interfaces information: %s"), error));
+      $('#network').html(tfm.i18n.sprintf(__("Error loading interfaces information: %s"), error));
       $('#network_tab a').addClass('tab-error');
     },
     success: function(result){
@@ -29,11 +29,13 @@ function update_nics(success_callback) {
 }
 
 var nic_update_handler = function() {
-  update_nics(function() {
-    interface_subnet_selected(primary_nic_form().find('select.interface_subnet'), 'ip');
-    interface_subnet_selected(primary_nic_form().find('select.interface_subnet6'), 'ip6');
-  });
+  update_nics(updatePrimarySubnetIPs);
 };
+
+function updatePrimarySubnetIPs() {
+  interface_subnet_selected(primary_nic_form().find('select.interface_subnet'), 'ip');
+  interface_subnet_selected(primary_nic_form().find('select.interface_subnet6'), 'ip6');
+}
 
 function computeResourceSelected(item){
   providerSpecificNICInfo = null;
@@ -257,9 +259,7 @@ function handleHostgroupChangedNew(element) {
   // call for form update only if there is a hostgroup selected
   if ($('#host_hostgroup_id').val() != "") {
     $("#host_compute_resource_id").prop("disabled", true);
-    return update_form(element).then(function () {
-      $("#host_compute_resource_id").prop("disabled", false);
-    });
+    return update_form(element);
   }
 }
 
@@ -318,6 +318,10 @@ function update_form(element, options) {
         // to handle case if def process_taxonomy changed compute_resource_id to nil
         if (!host_compute_resource_id.val()) {
           host_compute_resource_id.change();
+        } else {
+          // in case the compute resource was selected, we still want to check for
+          // free ip if applicable
+          updatePrimarySubnetIPs();
         }
         update_capabilities(host_compute_resource_id.val() ? $('#capabilities').val() : $('#bare_metal_capabilities').val());
       }
@@ -401,12 +405,12 @@ function update_provisioning_image(){
         if (image_options.find('option').length > 0) {
           if ($('#host_provision_method_image')[0].checked) {
             if ($('#provider').val() == 'Libvirt') {
-              libvirt_image_selected(image_options);
+              tfm.computeResource.libvirt.imageSelected(image_options);
             } else if ($('#provider').val() == 'Ovirt') {
               var template_select = $('#host_compute_attributes_template');
               if (template_select.length > 0) {
                 template_select.val(image_options.val());
-                ovirt_templateSelected(image_options);
+                tfm.computeResource.ovirt.templateSelected(image_options);
               }
             }
           }
@@ -533,13 +537,13 @@ function image_provision_method_selected() {
   var image_options = $('#image_selection select');
   image_options.attr('disabled', false);
   if ($('#provider').val() == 'Libvirt') {
-    libvirt_image_selected(image_options);
+    tfm.computeResource.libvirt.imageSelected(image_options);
   } else if ($('#provider').val() == 'Ovirt') {
     var template_options = $('#host_compute_attributes_template');
     if (template_options.length > 0) {
       template_options.attr('disabled', true);
       template_options.val(image_options.val());
-      ovirt_templateSelected(image_options);
+      tfm.computeResource.ovirt.templateSelected(image_options);
     }
   }
 }
@@ -655,7 +659,11 @@ function interface_domain_selected(element) {
           select = subnet6_options
         }
         if (select) {
-          select.append($("<option />").val(this.subnet.id).attr('data-suggest_new', this.subnet.unused_ip.suggest_new).text(this.subnet.to_label));
+          select.append($("<option />")
+            .val(this.subnet.id)
+            .attr('data-suggest_new', this.subnet.unused_ip.suggest_new)
+            .attr('data-vlan_id', this.subnet.vlanid)
+            .text(this.subnet.to_label));
         }
       });
       interface_domain_selected_subnet_handler(subnet_options, 'ip')
@@ -674,6 +682,8 @@ function interface_subnet_selected(element, ip_field, skip_mac) {
   var interface_ip = $(element).closest('fieldset').find('input[id$=_' + ip_field + ']');
 
   toggle_suggest_new_link(element, ip_field);
+
+  selectRelatedNetwork(element);
 
   interface_ip.attr('disabled', true);
   tfm.tools.showSpinner();
@@ -730,13 +740,37 @@ function interface_subnet_selected(element, ip_field, skip_mac) {
       }
     },
     error: function(request, status, error) {
-      setError(interface_ip, Jed.sprintf(__("Error generating IP: %s"), error));
+      setError(interface_ip, tfm.i18n.sprintf(__("Error generating IP: %s"), error));
     },
     complete: function () {
       tfm.tools.hideSpinner();
       interface_ip.attr('disabled', false);
     }
   });
+}
+
+function selectRelatedNetwork(element) {
+  var subnet_select = $(element);
+  var vlanId = subnet_select.find(':selected').attr('data-vlan_id');
+  var network_select = subnet_select.closest('fieldset').find('.vmware_network,.ovirt_network');
+
+  if (!vlanId || network_select.length == 0) {
+    return;
+  }
+
+  var selected = null;
+
+  network_select.find('option').each(function(index, option) {
+    if (selected === null && $(option).text().indexOf(vlanId) !== -1) {
+      selected = option.value;
+    }
+  });
+
+  if (selected !== null) {
+    network_select.val(selected).trigger('change');
+    preserve_selected_options(network_select);
+    update_interface_table();
+  }
 }
 
 function interface_type_selected(element) {
@@ -800,7 +834,9 @@ function pxeLoaderCompatibilityCheck() {
   var compatible = tfm.hosts.checkPXELoaderCompatibility(osTitle, pxeLoader);
   if (compatible === false) {
     $('#host_pxe_loader').closest('.form-group').addClass('has-warning');
-    $('#host_pxe_loader').closest('.form-group').find('.help-inline').html('<span class="error-message">' + __("Warning: This combination of loader and OS might not be able to boot.") + '</span>');
+    $('#host_pxe_loader').closest('.form-group').find('.help-inline').html('<span class="error-message">' +
+      __("Warning: This combination of loader and OS might not be able to boot.") + ' ' +
+      __("Manual configuration is needed.") + '</span>');
   } else {
     $('#host_pxe_loader').closest('.form-group').removeClass('has-warning');
     $('#host_pxe_loader').closest('.form-group').find('.help-inline').html('');

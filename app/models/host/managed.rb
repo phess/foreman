@@ -1,9 +1,17 @@
 class Host::Managed < Host::Base
+  # audit the changes to this model
+  audited :except => [:last_report, :last_compile, :lookup_value_matcher, :global_status]
+  has_associated_audits
+  # redefine audits relation because of the type change (by default the relation will look for auditable_type = 'Host::Managed')
+  has_many :audits, -> { where(:auditable_type => 'Host::Base') }, :foreign_key => :auditable_id,
+           :class_name => 'Audited::Audit'
+
   include Hostext::PowerInterface
   include Hostext::Search
   include Hostext::SmartProxy
   include Hostext::Token
   include Hostext::OperatingSystem
+  include Hostext::Puppetca
   include SelectiveClone
   include HostInfoExtensions
   include HostParams
@@ -13,8 +21,8 @@ class Host::Managed < Host::Base
   has_many :puppetclasses, :through => :host_classes, :dependent => :destroy
   has_many :reports, :foreign_key => :host_id, :class_name => 'ConfigReport'
   has_one :last_report_object, -> { order("#{Report.table_name}.id DESC") }, :foreign_key => :host_id, :class_name => 'ConfigReport'
+  has_many :all_reports, :foreign_key => :host_id
 
-  belongs_to :compute_resource
   belongs_to :image
   has_many :host_statuses, :class_name => 'HostStatus::Status', :foreign_key => 'host_id', :inverse_of => :host, :dependent => :destroy
   has_one :configuration_status_object, :class_name => 'HostStatus::ConfigurationStatus', :foreign_key => 'host_id'
@@ -67,19 +75,53 @@ class Host::Managed < Host::Base
 
   include HostCommon
 
+  smart_proxy_reference :subnet => [:dns_id, :dhcp_id, :tftp_id]
+  smart_proxy_reference :subnet6 => [:dns_id, :dhcp_id, :tftp_id]
+  smart_proxy_reference :domain => [:dns_id]
+  smart_proxy_reference :realm => [:realm_proxy_id]
+  smart_proxy_reference :self => [:puppet_proxy_id, :puppet_ca_proxy_id]
+
   class Jail < ::Safemode::Jail
     allow :name, :diskLayout, :puppetmaster, :puppet_ca_server, :operatingsystem, :os, :environment, :ptable, :hostgroup,
-      :url_for_boot, :params, :info, :hostgroup, :compute_resource, :domain, :ip, :ip6, :mac, :shortname, :architecture,
+      :url_for_boot, :hostgroup, :compute_resource, :domain, :ip, :ip6, :mac, :shortname, :architecture,
       :model, :certname, :capabilities, :provider, :subnet, :subnet6, :token, :location, :organization, :provision_method,
-      :image_build?, :pxe_build?, :otp, :realm, :param_true?, :param_false?, :nil?, :indent, :primary_interface,
+      :image_build?, :pxe_build?, :otp, :realm, :nil?, :indent, :primary_interface,
       :provision_interface, :interfaces, :bond_interfaces, :bridge_interfaces, :interfaces_with_identifier,
       :managed_interfaces, :facts, :facts_hash, :root_pass, :sp_name, :sp_ip, :sp_mac, :sp_subnet, :use_image,
       :multiboot, :jumpstart_path, :install_path, :miniroot, :medium, :bmc_nic, :templates_used, :owner, :owner_type,
-      :ssh_authorized_keys, :pxe_loader
+      :ssh_authorized_keys, :pxe_loader, :global_status, :get_status, :puppetca_token, :last_report
   end
 
-  scope :recent,      ->(*args) { where(["last_report > ?", (args.first || (Setting[:puppet_interval] + Setting[:outofsync_interval]).minutes.ago)]) }
-  scope :out_of_sync, ->(*args) { where(["last_report < ? and hosts.enabled != ?", (args.first || (Setting[:puppet_interval] + Setting[:outofsync_interval]).minutes.ago), false]) }
+  scope :recent, lambda { |interval = Setting[:outofsync_interval]|
+    with_last_report_within(interval.to_i.minutes)
+  }
+
+  scope :out_of_sync, lambda { |interval = Setting[:outofsync_interval]|
+    not_disabled.with_last_report_exceeded(interval.to_i.minutes)
+  }
+
+  scope :out_of_sync_for, lambda { |report_origin|
+    interval = Setting[:"#{report_origin.downcase}_interval"] || Setting[:outofsync_interval]
+    with_last_report_exceeded(interval.to_i.minutes)
+      .not_disabled
+      .with_last_report_origin(report_origin)
+  }
+
+  scope :not_disabled, lambda {
+    where(["#{Host.table_name}.enabled != ?", false])
+  }
+
+  scope :with_last_report_within, lambda { |minutes|
+    where(["#{Host.table_name}.last_report > ?", minutes.ago])
+  }
+
+  scope :with_last_report_exceeded, lambda { |minutes|
+    where(["#{Host.table_name}.last_report < ?", minutes.ago])
+  }
+
+  scope :with_last_report_origin, lambda { |origin|
+    includes(:last_report_object).where(reports: { origin: origin })
+  }
 
   scope :with_status, lambda { |status_type|
     eager_load(:host_statuses).where("host_status.type = '#{status_type}'")
@@ -129,7 +171,7 @@ class Host::Managed < Host::Base
   }
 
   scope :without_pending_changes, lambda {
-    with_config_status.where((HostStatus::ConfigurationStatus.is_not('pending')).to_s)
+    with_config_status.where(HostStatus::ConfigurationStatus.is_not('pending').to_s)
   }
 
   scope :successful, -> { without_changes.without_error.without_pending_changes}
@@ -138,7 +180,7 @@ class Host::Managed < Host::Base
 
   scope :alerts_enabled, -> { where(:enabled => true) }
 
-  scope :run_distribution, lambda { |fromtime,totime|
+  scope :run_distribution, lambda { |fromtime, totime|
     if fromtime.nil? || totime.nil?
       raise ::Foreman.Exception.new(N_("invalid time range"))
     else
@@ -146,16 +188,16 @@ class Host::Managed < Host::Base
     end
   }
 
-  scope :for_vm, ->(cr,vm) { where(:compute_resource_id => cr.id, :uuid => Array.wrap(vm).compact.map(&:identity).map(&:to_s)) }
+  scope :with_any_reports_between, lambda { |from, to|
+    joins(:all_reports).where("reports.reported_at BETWEEN ? AND ?", from, to)
+  }
+
+  scope :for_vm, ->(cr, vm) { where(:compute_resource_id => cr.id, :uuid => Array.wrap(vm).compact.map(&:identity).map(&:to_s)) }
 
   scope :with_compute_resource, -> { where.not(:compute_resource_id => nil, :uuid => nil) }
 
-  # audit the changes to this model
-  audited :except => [:last_report, :last_compile, :lookup_value_matcher]
-  has_associated_audits
-  #redefine audits relation because of the type change (by default the relation will look for auditable_type = 'Host::Managed')
-  has_many :audits, -> { where(:auditable_type => 'Host') }, :foreign_key => :auditable_id,
-    :class_name => 'Audited::Audit'
+  scope :in_build_mode, -> { where(build: true) }
+  scope :with_build_errors, -> { where.not(build_errors: nil) }
 
   # some shortcuts
   alias_attribute :arch, :architecture
@@ -163,10 +205,12 @@ class Host::Managed < Host::Base
   validates :environment_id, :presence => true, :unless => Proc.new { |host| host.puppet_proxy_id.blank? }
   validates :organization_id, :presence => true, :if => Proc.new { |host| host.managed? && SETTINGS[:organizations_enabled] }
   validates :location_id,     :presence => true, :if => Proc.new { |host| host.managed? && SETTINGS[:locations_enabled] }
+  validate :compute_resource_in_taxonomy, :if => Proc.new { |host| host.managed? && host.compute_resource_id.present? }
 
   if SETTINGS[:unattended]
+    # define before orchestration is included so we can prepare object before VM is tried to be deleted
+    before_destroy :disassociate!, :if => Proc.new { |host| host.uuid && !Setting[:destroy_vm_on_host_delete] }
     # handles all orchestration of smart proxies.
-    include UnattendedHelper # which also includes Foreman::Renderer
     include Orchestration
     # DHCP orchestration delegation
     delegate :dhcp?, :dhcp_records, :to => :primary_interface
@@ -187,13 +231,18 @@ class Host::Managed < Host::Base
     validates :architecture_id, :presence => true, :if => Proc.new {|host| host.managed}
     validates :root_pass, :length => {:minimum => 8, :message => _('should be 8 characters or more')},
                           :presence => {:message => N_('should not be blank - consider setting a global or host group default')},
-                          :if => Proc.new { |host| host.managed && host.pxe_build? && build? }
+                          :if => Proc.new { |host| host.managed && !host.image_build? && build? }
     validates :ptable_id, :presence => {:message => N_("can't be blank unless a custom partition has been defined")},
-                          :if => Proc.new { |host| host.managed && host.disk.empty? && !Foreman.in_rake? && host.pxe_build? && host.build? }
+                          :if => Proc.new { |host| host.managed && host.disk.empty? && !Foreman.in_rake? && !host.image_build? && host.build? }
     validates :provision_method, :inclusion => {:in => Proc.new { self.provision_methods }, :message => N_('is unknown')}, :if => Proc.new {|host| host.managed?}
-    validates :medium_id, :presence => true, :if => Proc.new { |host| host.validate_media? }
+    validates :medium_id, :presence => true,
+                          :if => Proc.new { |host| host.validate_media? }
+    validates :medium_id, :inclusion => {:in => Proc.new { |host| host.operatingsystem.medium_ids },
+                                         :message => N_('must belong to host\'s operating system')},
+                          :if => Proc.new { |host| host.operatingsystem && host.medium }
     validate :provision_method_in_capabilities
     validate :short_name_periods
+    validate :check_interfaces
     before_validation :set_compute_attributes, :on => :create, :if => Proc.new { compute_attributes_empty? }
     validate :check_if_provision_method_changed, :on => :update, :if => Proc.new { |host| host.managed }
     validates :uuid, uniqueness: { :allow_blank => true }
@@ -229,6 +278,12 @@ class Host::Managed < Host::Base
     ActiveModel::Name.new(Host)
   end
 
+  # Permissions introduced by plugins for this class can cause resource <-> permission
+  # names mapping to fail randomly so as a safety precaution, we specify the name more explicitly.
+  def self.find_permission_name(action)
+    "#{action}_hosts"
+  end
+
   def clear_reports
     # Remove any reports that may be held against this host
     Report.where("host_id = #{id}").delete_all
@@ -243,6 +298,7 @@ class Host::Managed < Host::Base
     return unless respond_to?(:old) && old && build? && !old.build?
     clear_facts
     clear_reports
+    self.build_errors = nil
   end
 
   # Called from the host build post install process to indicate that the base build has completed
@@ -263,41 +319,13 @@ class Host::Managed < Host::Base
     end
   end
 
-  #retuns fqdn of host puppetmaster
-  def pm_fqdn
-    puppetmaster == "puppet" ? "puppet.#{domain.name}" : (puppetmaster).to_s
-  end
-
-  # Cleans Certificate and enable Autosign
-  # Called before a host is given their provisioning template
-  # Returns : Boolean status of the operation
-  def handle_ca
-    # If there's no puppetca, tell the caller that everything is ok
-    return true unless Setting[:manage_puppetca]
-    return true unless puppetca?
-
-    # From here out, we expect things to work and return true
-    return false unless respond_to?(:initialize_puppetca, true)
-    return false unless initialize_puppetca
-    return false unless delCertificate
-
-    # If use_uuid_for_certificates is true, reuse the certname UUID value.
-    # If false, then reset the certname if it does not match the hostname.
-    if (Setting[:use_uuid_for_certificates] ? !Foreman.is_uuid?(certname) : certname != hostname)
-      logger.info "Removing certificate value #{certname} for host #{name}"
-      self.certname = nil
-    end
-
-    setAutosign
-  end
-
-  def import_facts(facts)
+  def import_facts(facts, source_proxy = nil)
     # Facts come from 'existing' attributes/infrastructure. We skip triggering
     # the orchestration of this infrastructure when we create a host this way.
-    skip_orchestration! if SETTINGS[:unattended]
-    super(facts)
+    skip_orchestration! if SETTINGS[:unattended] && !SETTINGS[:enable_orchestration_on_fact_import]
+    super
   ensure
-    enable_orchestration! if SETTINGS[:unattended]
+    enable_orchestration! if SETTINGS[:unattended] && !SETTINGS[:enable_orchestration_on_fact_import]
   end
 
   # Request a new OTP for a host
@@ -314,12 +342,20 @@ class Host::Managed < Host::Base
     end
   end
 
+  def disk_layout_source
+    @disk_layout_source ||= if disk.present?
+                              Foreman::Renderer::Source::String.new(name: 'Custom disk layout',
+                                                                    content: disk.tr("\r", ''))
+                            elsif ptable.present?
+                              Foreman::Renderer::Source::Database.new(ptable)
+                            end
+  end
+
   # returns the host correct disk layout, custom or common
   def diskLayout
-    @host = self
-    template = disk.blank? ? ptable.layout : disk
-    template_name = disk.blank? ? ptable.name : 'Custom disk layout'
-    unattended_render(template.tr("\r", ''), template_name)
+    raise Foreman::Renderer::Errors::RenderingError, 'Neither disk nor partition table defined for host' unless disk_layout_source
+    scope = Foreman::Renderer.get_scope(host: self, source: disk_layout_source)
+    Foreman::Renderer.render(disk_layout_source, scope)
   end
 
   # reports methods
@@ -328,7 +364,11 @@ class Host::Managed < Host::Base
   end
 
   def no_report
-    last_report.nil? || last_report < Time.now.utc - (Setting[:puppet_interval] + Setting[:outofsync_interval]).minutes && enabled?
+    last_report.nil? || last_report < Time.now.utc - origin_interval.minutes && enabled?
+  end
+
+  def origin_interval
+    Setting[:"#{last_report.origin.downcase}_interval"] || 0
   end
 
   def disabled?
@@ -356,28 +396,6 @@ class Host::Managed < Host::Base
     all_puppetclasses.collect {|c| c.name}
   end
 
-  def self.import_host(hostname, import_type, certname = nil, proxy_id = nil)
-    raise(::Foreman::Exception.new("Invalid Hostname, must be a String")) unless hostname.is_a?(String)
-
-    # downcase everything
-    hostname.try(:downcase!)
-    certname.try(:downcase!)
-
-    host = Host.find_by_certname(certname) if certname.present?
-    host ||= Host.find_by_name(hostname)
-    host ||= Host.new(:name => hostname) # if no host was found, build a new one
-
-    # if we were given a certname but found the Host by hostname we should update the certname
-    # this also sets certname for newly created hosts
-    host.certname = certname if certname.present?
-
-    # if proxy authentication is enabled and we have no puppet proxy set and the upload came from puppet,
-    # use it as puppet proxy.
-    host.puppet_proxy_id ||= proxy_id if import_type == 'puppet'
-
-    host
-  end
-
   def attributes_to_import_from_facts
     attrs = [:architecture, :hostgroup]
     if !Setting[:ignore_facts_for_operatingsystem] || (Setting[:ignore_facts_for_operatingsystem] && operatingsystem.blank?)
@@ -390,15 +408,10 @@ class Host::Managed < Host::Base
     super + attrs
   end
 
-  def populate_fields_from_facts(facts = self.facts_hash, type = 'puppet')
-    importer = super
-    if Setting[:update_environment_from_facts]
-      set_non_empty_values importer, [:environment]
-    else
-      self.environment ||= importer.environment unless importer.environment.blank?
-    end
-    operatingsystem.architectures << architecture if operatingsystem && architecture && !operatingsystem.architectures.include?(architecture)
-    self.save(:validate => false)
+  def populate_fields_from_facts(parser, type, source_proxy)
+    super
+    update_os_from_facts if operatingsystem_id_changed?
+    populate_facet_fields(parser, type, source_proxy)
   end
 
   # Called by build link in the list
@@ -408,14 +421,15 @@ class Host::Managed < Host::Base
   # Any facts are discarded
   def setBuild
     self.build = true
-    self.save
+    self.initiated_at = Time.now.utc
+    logger.warn("Set build failed: #{errors.inspect}") unless self.save
     errors.empty?
   end
 
   # this method accepts a puppets external node yaml output and generate a node in our setup
   # it is assumed that you already have the node (e.g. imported by one of the rack tasks)
   def importNode(nodeinfo)
-    myklasses= []
+    myklasses = []
     # puppet classes
     classes = nodeinfo["classes"]
     classes = classes.keys if classes.is_a?(Hash)
@@ -435,7 +449,7 @@ class Host::Managed < Host::Base
     # additionally, we don't import any non strings values, as puppet don't know what to do with those as well.
 
     myparams = self.info["parameters"]
-    nodeinfo["parameters"].each_pair do |param,value|
+    nodeinfo["parameters"].each_pair do |param, value|
       next if fact_names.exists? :name => param
       next unless value.is_a?(String)
 
@@ -459,7 +473,7 @@ class Host::Managed < Host::Base
     output = []
     data = group("#{Host.table_name}.#{association}_id").reorder('').count
     associations = association.to_s.camelize.constantize.where(:id => data.keys).all
-    data.each do |k,v|
+    data.each do |k, v|
       begin
         output << {:label => associations.detect {|a| a.id == k }.to_label, :data => v } unless v == 0
       rescue
@@ -475,8 +489,8 @@ class Host::Managed < Host::Base
   # returns sorted hash
   def self.count_habtm(association)
     counter = Host::Managed.joins(association.tableize.to_sym).group("#{association.tableize.to_sym}.id").reorder('').count
-    #Puppetclass.find(counter.keys.compact)...
-    association.camelize.constantize.find(counter.keys.compact).map {|i| {:label=>i.to_label, :data =>counter[i.id]}}
+    # Puppetclass.find(counter.keys.compact)...
+    association.camelize.constantize.find(counter.keys.compact).map {|i| {:label => i.to_label, :data => counter[i.id]}}
   end
 
   def self.provision_methods
@@ -491,31 +505,28 @@ class Host::Managed < Host::Base
   end
 
   def self.valid_rebuild_only_values
-    Nic::Managed.rebuild_methods.values + Host::Managed.rebuild_methods.values
-  end
-
-  def classes_from_storeconfigs
-    klasses = resources.select(:title).where(:restype => "Class").where("title <> ? AND title <> ?", "main", "Settings").order(:title)
-    klasses.map!(&:title).delete(:main)
-    klasses
+    if Host::Managed.respond_to?(:rebuild_methods)
+      Nic::Managed.rebuild_methods.values + Host::Managed.rebuild_methods.values
+    else
+      Nic::Managed.rebuild_methods.values
+    end
   end
 
   def can_be_built?
-    managed? && SETTINGS[:unattended] && pxe_build? && !build?
+    managed? && SETTINGS[:unattended] && !image_build? && !build?
   end
 
   def hostgroup_inherited_attributes
-    %w{puppet_proxy_id puppet_ca_proxy_id environment_id compute_profile_id realm_id}
+    %w{puppet_proxy_id puppet_ca_proxy_id environment_id compute_profile_id realm_id compute_resource_id}
   end
 
   def apply_inherited_attributes(attributes, initialized = true)
     return nil unless attributes
-    #convert possible strong parameters to unsafe hash (filtering out unsafe items) and
-    #clone to minimize side effects
-    attributes = hash_clone(attributes.to_h).with_indifferent_access
+
+    attributes = hash_clone(attributes).with_indifferent_access
 
     new_hostgroup_id = attributes['hostgroup_id'] || attributes['hostgroup_name'] || attributes['hostgroup'].try(:id)
-    #hostgroup didn't change, no inheritance needs update.
+    # hostgroup didn't change, no inheritance needs update.
     return attributes if new_hostgroup_id.blank?
 
     new_hostgroup = self.hostgroup if initialized
@@ -555,17 +566,20 @@ class Host::Managed < Host::Base
   def inherited_attributes
     inherited_attrs = %w{domain_id}
     if SETTINGS[:unattended]
-      inherited_attrs.concat(%w{operatingsystem_id architecture_id})
+      inherited_attrs.concat(%w{operatingsystem_id architecture_id compute_resource_id})
       inherited_attrs << "subnet_id" unless compute_provides?(:ip)
       inherited_attrs << "subnet6_id" unless compute_provides?(:ip6)
-      inherited_attrs.concat(%w{medium_id ptable_id pxe_loader}) if pxe_build?
+      inherited_attrs.concat(%w{medium_id ptable_id pxe_loader}) unless image_build?
     end
     inherited_attrs
   end
 
   def set_compute_attributes
-    return unless compute_profile_present?
-    self.compute_attributes = compute_resource.compute_profile_attributes_for(compute_profile_id)
+    if compute_profile_present?
+      self.compute_attributes = compute_resource.compute_profile_attributes_for(compute_profile_id)
+    elsif compute_resource
+      self.compute_attributes ||= {}
+    end
   end
 
   def set_ip_address
@@ -603,7 +617,7 @@ class Host::Managed < Host::Base
 
   # if certname does not exist, use hostname instead
   def certname
-    read_attribute(:certname) || name
+    self[:certname] || name
   end
 
   def capabilities
@@ -624,7 +638,7 @@ class Host::Managed < Host::Base
 
   # no need to store anything in the db if the password is our default
   def root_pass
-    return read_attribute(:root_pass) if read_attribute(:root_pass).present?
+    return self[:root_pass] if self[:root_pass].present?
     return hostgroup.try(:root_pass) if hostgroup.try(:root_pass).present?
     Setting[:root_pass]
   end
@@ -642,6 +656,11 @@ class Host::Managed < Host::Base
     end
     host.refresh_global_status
     host
+  end
+
+  def check_interfaces
+    errors.add(:base, _("An interface marked as provision is missing")) if self.interfaces.detect(&:provision).nil?
+    errors.add(:base, _("An interface marked as primary is missing")) if self.interfaces.detect(&:primary).nil?
   end
 
   def bmc_nic
@@ -683,22 +702,24 @@ class Host::Managed < Host::Base
   end
 
   def ipmi_boot(booting_device)
-    raise Foreman::Exception.new(
-      _("No BMC NIC available for host %s") % self) unless bmc_available?
+    unless bmc_available?
+      raise Foreman::Exception.new(
+        _("No BMC NIC available for host %s") % self)
+    end
     bmc_proxy.boot({:function => 'bootdevice', :device => booting_device})
   end
 
   # take from hostgroup if compute_profile_id is nil
   def compute_profile_id
-    read_attribute(:compute_profile_id) || hostgroup.try(:compute_profile_id)
+    self[:compute_profile_id] || hostgroup.try(:compute_profile_id)
   end
 
   def provision_method
-    read_attribute(:provision_method) || capabilities.first.to_s
+    self[:provision_method] || capabilities.first.to_s
   end
 
   def explicit_pxe_loader
-    read_attribute(:pxe_loader).presence
+    self[:pxe_loader].presence
   end
 
   def pxe_loader
@@ -714,13 +735,7 @@ class Host::Managed < Host::Base
   end
 
   def validate_media?
-    managed && pxe_build? && build?
-  end
-
-  def render_template(template)
-    @host = self
-    load_template_vars
-    unattended_render(template)
+    managed && !image_build? && build?
   end
 
   def build_status_checker
@@ -779,6 +794,7 @@ class Host::Managed < Host::Base
   def build_status_label(options = {})
     @build_status_label ||= get_status(HostStatus::BuildStatus).to_label(options)
   end
+
   # rebuilds orchestration configuration for a host
   # takes all the methods from Orchestration modules that are registered for configuration rebuild
   # arguments:
@@ -795,15 +811,10 @@ class Host::Managed < Host::Base
     end
 
     self.class.rebuild_methods_for(only).map do |method, pretty_name|
-      raise ::Foreman::Exception.new(N_("There are orchestration modules with methods for configuration rebuild that have identical name: '%s'") % pretty_name) if result[pretty_name]
+      raise ::Foreman::Exception.new(N_("There are orchestration modules with methods for configuration rebuild that have identical name: '%s'"), pretty_name) if result[pretty_name]
       result[pretty_name] = self.send method
     end
     result
-  end
-
-  def to_ip_address(name_or_ip)
-    Foreman::Deprecation.deprecation_warning('1.17', 'Host::Managed#to_ip_address has been deprecated, you should use NicIpResolver class instead')
-    NicIpResolver.new(:nic => provision_interface).to_ip_address(name_or_ip)
   end
 
   def apply_compute_profile(modification)
@@ -820,7 +831,23 @@ class Host::Managed < Host::Base
     self.hardware_model_name
   end
 
+  def local_boot_template_name(kind)
+    key = "local_boot_#{kind}"
+    host_params[key] || Setting[key]
+  end
+
   private
+
+  def update_os_from_facts
+    operatingsystem.architectures << architecture if operatingsystem && architecture && !operatingsystem.architectures.include?(architecture)
+    self.medium = nil if medium&.operatingsystems&.exclude?(operatingsystem)
+  end
+
+  # Permissions introduced by plugins for this class can cause resource <-> permission
+  # names mapping to fail randomly so as a safety precaution, we specify the name more explicitly.
+  def permission_name(action)
+    "#{action}_hosts"
+  end
 
   def compute_profile_present?
     !(compute_profile_id.nil? || compute_resource_id.nil?)
@@ -838,7 +865,7 @@ class Host::Managed < Host::Base
     if dups.present?
       dups.last.first.errors.add(:name, :taken)
       self.errors.add :interfaces, _('Some interfaces are invalid')
-      return false
+      throw :abort
     end
   end
 
@@ -857,35 +884,42 @@ class Host::Managed < Host::Base
   # checks if the host association is a valid association for this host
   def ensure_associations
     status = true
-    %w{ ptable medium architecture}.each do |e|
-      value = self.send(e.to_sym)
-      next if value.blank?
-      unless os.send(e.pluralize.to_sym).include?(value)
-        errors.add("#{e}_id".to_sym, _("%{value} does not belong to %{os} operating system") % { :value => value, :os => os })
-        status = false
+    if SETTINGS[:unattended] && managed? && os && !image_build?
+      %w{ptable medium architecture}.each do |e|
+        value = self.send(e.to_sym)
+        next if value.blank?
+        unless os.send(e.pluralize.to_sym).include?(value)
+          errors.add("#{e}_id".to_sym, _("%{value} does not belong to %{os} operating system") % { :value => value, :os => os })
+          status = false
+        end
       end
-    end if SETTINGS[:unattended] && managed? && os && pxe_build?
+    end
 
-    puppetclasses.select("puppetclasses.id,puppetclasses.name").distinct.each do |e|
-      unless environment.puppetclasses.map(&:id).include?(e.id)
-        errors.add(:puppetclasses, _("%{e} does not belong to the %{environment} environment") % { :e => e, :environment => environment })
-        status = false
+    status = validate_association_taxonomy(:environment)
+
+    if environment
+      puppetclasses.select("puppetclasses.id,puppetclasses.name").distinct.each do |e|
+        unless environment.puppetclasses.map(&:id).include?(e.id)
+          errors.add(:puppetclasses, _("%{e} does not belong to the %{environment} environment") % { :e => e, :environment => environment })
+          status = false
+        end
       end
-    end if environment
+    end
     status
   end
 
   def set_certname
-    self.certname = Foreman.uuid if read_attribute(:certname).blank? || new_record?
+    self.certname = Foreman.uuid if self[:certname].blank? || new_record?
   end
 
   def provision_method_in_capabilities
     return unless managed?
-    errors.add(:provision_method, _('is an unsupported provisioning method')) unless capabilities.map(&:to_s).include?(self.provision_method)
+    methods_available = capabilities.map(&:to_s)
+    errors.add(:provision_method, _('is an unsupported provisioning method, available: %s') % methods_available.join(',')) unless methods_available.include?(self.provision_method)
   end
 
   def check_if_provision_method_changed
-    if self.provision_method_changed?
+    if self.provision_method_changed? && !provision_method_changed?(from: nil, to: capabilities.first.to_s)
       errors.add(:provision_method, _("can't be updated after host is provisioned"))
     end
   end
@@ -898,19 +932,19 @@ class Host::Managed < Host::Base
   # but we should trigger it only for existing records and unless interfaces also changed (then validation is run
   # on them automatically)
   def trigger_nic_orchestration
-    self.primary_interface.valid? unless self.primary_interface.changed?
-
-    if self.primary_interface != self.provision_interface && !self.provision_interface.changed?
-      self.provision_interface.valid?
+    self.primary_interface.valid? if self.primary_interface && !self.primary_interface.changed?
+    unless self.provision_interface.nil?
+      return if self.primary_interface == self.provision_interface
+      self.provision_interface.valid? if self.provision_interface && !self.provision_interface.changed?
     end
   end
 
   # For performance reasons logs and reports are deleted in batch
   # see http://projects.theforeman.org/issues/8316 for details
   def remove_reports
-    return if reports.empty?
-    Log.where("report_id IN (#{reports.pluck(:id).join(',')})").delete_all
-    Report.where("host_id = #{id}").delete_all
+    host_reports = Report.where(host_id: id)
+    Log.where(report_id: host_reports.pluck(:id)).delete_all
+    host_reports.delete_all
   end
 
   def clear_puppetinfo
@@ -937,5 +971,24 @@ class Host::Managed < Host::Base
     MailNotification[:host_built].deliver(self, :users => recipients) if recipients.present?
   rescue SocketError, Net::SMTPError => e
     Foreman::Logging.exception("Host has been created. Failed to send email", e)
+  end
+
+  # Ensures that object assigned in the association belongs to the taxonomies of the host.
+  # Returns true if it does, otherwise it adds a validation error and returns false.
+  def validate_association_taxonomy(association_name)
+    association = self.class.reflect_on_association(association_name)
+    raise ArgumentError, "Association #{association_name} not found" unless association
+    associated_object_id = public_send(association.foreign_key)
+    if associated_object_id.present? &&
+      association.klass.with_taxonomy_scope(organization, location).find_by(id: associated_object_id).blank?
+      errors.add(association.foreign_key, _("with id %{object_id} doesn't exist or is not assigned to proper organization and/or location") % { :object_id => associated_object_id })
+      false
+    else
+      true
+    end
+  end
+
+  def compute_resource_in_taxonomy
+    validate_association_taxonomy(:compute_resource)
   end
 end

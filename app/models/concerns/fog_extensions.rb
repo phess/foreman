@@ -27,7 +27,7 @@ if Foreman::Model::Libvirt.available?
   require 'fog/libvirt'
   require 'fog/libvirt/compute'
   require 'fog/libvirt/models/compute/server'
-  Fog::Compute::Libvirt::Server.send(:include, FogExtensions::Libvirt::Server)
+  Fog::Libvirt::Compute::Server.send(:include, FogExtensions::Libvirt::Server)
 end
 
 if Foreman::Model::Ovirt.available?
@@ -46,7 +46,7 @@ if Foreman::Model::Openstack.available?
   require 'fog/compute/openstack'
   Fog::Compute::OpenStack::Real.send(:include, FogExtensions::Openstack::Core)
   require 'fog/compute/openstack/models/server'
-  Fog::Compute::OpenStack::Server.send(:include, FogExtensions::Openstack::Server)
+  Fog::Compute::OpenStack::Server.send(:prepend, FogExtensions::Openstack::Server)
   require 'fog/compute/openstack/models/flavor'
   Fog::Compute::OpenStack::Flavor.send(:include, FogExtensions::Openstack::Flavor)
 end

@@ -2,13 +2,17 @@
   position: relative;
   height: 360px;
   width: 100%;
+
+  .ace_invisible {
+    color: #575757;
+  }
 }
 
 .navbar-full-width {
   width: 100%;
 }
 
-.navbar-nav.navbar-right.navbar-editor:last-child {
+.navbar-nav.navbar-right.navbar-editor {
   margin-right: 0;
 
   li {
@@ -16,7 +20,8 @@
   }
 }
 
-.fullscreen {
+.editor-container.fullscreen {
+  height: 82vh !important;
   .navbar-editor {
     margin: 0;
   }

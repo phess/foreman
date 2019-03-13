@@ -1,4 +1,4 @@
-<%= javascript 'hosts', 'host_edit', 'host_edit_interfaces', 'class_edit', 'compute_resource', 'charts' %>
+<%= javascript 'hosts', 'host_edit', 'host_edit_interfaces', 'class_edit', 'charts' %>
 <%= render "hosts/dhcp_lease_errors" if has_dhcp_lease_errors?(@host.errors) %>
 <%= render "hosts/conflicts" if (!has_dhcp_lease_errors?(@host.errors) && has_conflicts?(@host.errors)) %>
 <%= render "hosts/progress" %>
@@ -9,7 +9,7 @@
     <%= base_errors_for @host %>
 
     <ul class="nav nav-tabs" data-tabs="tabs">
-      <li class="active"><a href="#primary" data-toggle="tab"><%= _('Host') %></a></li>
+      <li class="active"><a href="#primary" id='host_tab' data-toggle="tab"><%= _('Host') %></a></li>
 
       <% if SETTINGS[:unattended] and @host.managed %>
         <% if authorized_for(:controller => "Compute::Resources::Vms", :action => :create) %>
@@ -53,8 +53,11 @@
             :help_inline => :indicator } %>
 
         <%= select_f f, :compute_resource_id, accessible_resource(@host, :compute_resource), :id, :to_label,
-          { :include_blank => _('Bare Metal') },
-          {:label => _('Deploy On'), :disabled => (!@host.new_record? || @host.uuid.present?), :'data-url' => compute_resource_selected_hosts_path,
+          { :include_blank => _('Bare Metal'),
+            :disable_button => _(HostsAndHostgroupsHelper::INHERIT_TEXT),
+            :disable_button_enabled => inherited_by_default?(:compute_resource_id, @host),
+            :user_set => user_set?(:compute_resource_id) },
+          { :label => _('Deploy On'), :disabled => (!@host.new_record? || @host.uuid.present?), :'data-url' => compute_resource_selected_hosts_path,
             :onchange => 'computeResourceSelected(this);',
             :help_inline => :indicator } if SETTINGS[:unattended] && @host.new_record? || @host.compute_resource_id %>
 
@@ -92,7 +95,7 @@
       <%= f.hidden_field :uuid if @host.uuid.present? %>
       <% # Required for import action %>
       <%= f.hidden_field :compute_resource_id if @host.new_record? && @host.uuid.present? %>
-      <%= f.hidden_field :progress_report_id, :data=>{:url=>task_path(@host.progress_report_id)} %>
+      <%= f.hidden_field(:progress_report_id, :data=>{:url=>task_path(@host.progress_report_id)}) if @host.orchestrated? %>
       <%= f.hidden_field :type, :value => @host.type if @host.type_changed? %>
 
       <div class="tab-pane"  id="network">
@@ -110,7 +113,7 @@
         <% if authorized_for(:controller => "host_editing", :action => "view_params") %>
           <fieldset>
             <h2><%= _('Global Parameters') %></h2>
-            <%= render "common_parameters/inherited_parameters", { :inherited_parameters => @host.host_inherited_params(true), :parameters => @host.host_parameters } %>
+            <%= render "common_parameters/inherited_parameters", { :inherited_parameters => @host.inherited_params_hash, :parameters => @host.host_parameters } %>
             <h2><%= _('Host Parameters') %></h2>
             <%= render "common_parameters/parameters", { :f => f, :type => :host_parameters } %>
           </fieldset>
@@ -118,12 +121,10 @@
       </div>
 
       <div class="tab-pane"  id="info">
-        <% if SETTINGS[:login] %>
-          <%= selectable_f f, :is_owned_by, option_groups_from_collection_for_select(
-            [User.authorized(:view_users), Usergroup.authorized(:view_usergroups)], :visible, :table_name, :id_and_type, :select_title,
-            @host.owner_suggestion.id_and_type), { :include_blank => _("Select an owner") }, { :label => _("Owned By") }
-          %>
-        <% end %>
+        <%= selectable_f f, :is_owned_by, option_groups_from_collection_for_select(
+          [User.authorized(:view_users), Usergroup.authorized(:view_usergroups)], :visible, :table_name, :id_and_type, :select_title,
+          @host.owner_suggestion.id_and_type), { :include_blank => _("Select an owner") }, { :label => _("Owned By") }
+        %>
         <%= checkbox_f f, :enabled,
           :help_inline => _("Include this host within Foreman reporting")
         %>
@@ -135,7 +136,7 @@
 
     </div>
 
-    <%= hidden_field_tag 'bare_metal_capabilities', @host.bare_metal_capabilities %>
+    <%= hidden_field_tag 'bare_metal_capabilities', @host.bare_metal_capabilities, :disabled => true %>
     <%= f.hidden_field :overwrite? %>
     <%= submit_or_cancel f, @host.overwrite?, :cancel_path => (@host.new_record? ? hosts_path : host_path(:id => @host.name_was)) %>
   <% end %>

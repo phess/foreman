@@ -1,7 +1,8 @@
-# encoding: UTF-8
 require 'digest/sha1'
 
 class User < ApplicationRecord
+  audited :except => [:last_login_on, :password_hash, :password_salt, :password_confirmation],
+          :associations => :roles
   include Authorizable
   extend FriendlyId
   friendly_id :login
@@ -12,17 +13,17 @@ class User < ApplicationRecord
   include UserUsergroupCommon
   include Exportable
   include TopbarCacheExpiry
-  audited :except => [:last_login_on, :password, :password_hash, :password_salt, :password_confirmation]
+  include JwtAuth
 
   ANONYMOUS_ADMIN = 'foreman_admin'
   ANONYMOUS_API_ADMIN = 'foreman_api_admin'
   ANONYMOUS_CONSOLE_ADMIN = 'foreman_console_admin'
 
   validates_lengths_from_database :except => [:firstname, :lastname, :format, :mail, :login]
-  attr_accessor :password, :password_confirmation, :current_password
-  attr_reader :password_changed
+  attr_accessor :password_confirmation, :current_password
+  attribute :password
+
   after_save :ensure_default_role
-  after_save :unset_password_changed
   before_destroy EnsureNotUsedBy.new([:direct_hosts, :hosts]), :ensure_hidden_users_are_not_deleted, :ensure_last_admin_is_not_deleted
 
   belongs_to :auth_source
@@ -34,16 +35,17 @@ class User < ApplicationRecord
   has_many :usergroup_member,  :dependent => :destroy,   :as => :member
   has_many :user_roles,        :dependent => :destroy, :as => :owner
   has_many :cached_user_roles, :dependent => :destroy
+  has_many :cached_usergroup_members
   has_many :cached_usergroups, :through => :cached_usergroup_members, :source => :usergroup
   has_many :cached_roles,      -> { distinct }, :through => :cached_user_roles, :source => :role
   has_many :usergroups,        :through => :usergroup_member, :dependent => :destroy
   has_many :roles,             :through => :user_roles,       :dependent => :destroy
   has_many :filters,           :through => :cached_roles
   has_many :permissions,       :through => :filters
-  has_many :cached_usergroup_members
   has_many :widgets, :dependent => :destroy
   has_many :ssh_keys, :dependent => :destroy
-
+  has_many :personal_access_tokens, :dependent => :destroy
+  has_many :table_preferences, :dependent => :destroy, :inverse_of => :user
   has_many :user_mail_notifications, :dependent => :destroy, :inverse_of => :user
   has_many :mail_notifications, :through => :user_mail_notifications
   has_many :notification_recipients, :dependent => :delete_all
@@ -79,6 +81,10 @@ class User < ApplicationRecord
   validates :locale, :format => { :with => /\A\w{2}([_-]\w{2})?\Z/ }, :allow_blank => true, :if => Proc.new { |user| user.respond_to?(:locale) }
   before_validation :normalize_locale
 
+  def self.title_name
+    "login".freeze
+  end
+
   def self.name_format
     /\A[[:alnum:]\s'_\-\.()<>;=,]*\z/
   end
@@ -92,12 +98,13 @@ class User < ApplicationRecord
   validates :firstname, :lastname, :format => {:with => name_format}, :length => {:maximum => 50}, :allow_nil => true
   validate :name_used_in_a_usergroup, :ensure_hidden_users_are_not_renamed, :ensure_hidden_users_remain_admin,
            :ensure_privileges_not_escalated, :default_organization_inclusion, :default_location_inclusion,
-           :ensure_last_admin_remains_admin, :hidden_authsource_restricted, :ensure_admin_password_changed_by_admin
+           :ensure_last_admin_remains_admin, :hidden_authsource_restricted, :ensure_admin_password_changed_by_admin,
+           :check_permissions_for_changing_login
   before_validation :verify_current_password, :if => Proc.new {|user| user == User.current},
                     :unless => Proc.new {|user| user.password.empty?}
   before_validation :prepare_password, :normalize_mail
-  before_validation :set_password_changed, :if => Proc.new { |user| user.manage_password? && user.password.present? }
   before_save       :set_lower_login
+  before_save       :normalize_timezone
 
   after_create :welcome_mail
   after_create :set_default_widgets
@@ -122,6 +129,10 @@ class User < ApplicationRecord
   dirty_has_many_associations :roles
 
   attr_exportable :firstname, :lastname, :mail, :description, :fullname, :name => ->(user) { user.login }, :ssh_authorized_keys => ->(user) { user.ssh_keys.map(&:to_export_hash) }
+
+  def as_json(options = {})
+    super.tap { |h| h.key?('user') ? h['user']['name'] = name : h['name'] = name }
+  end
 
   class Jail < ::Safemode::Jail
     allow :login, :ssh_keys, :ssh_authorized_keys, :description, :firstname, :lastname, :mail
@@ -162,7 +173,7 @@ class User < ApplicationRecord
   # note that if you assign user new usergroups which change the admin flag you must save
   # the record before #admin? will reflect this
   def admin?
-    read_attribute(:admin) || cached_usergroups.any?(&:admin?)
+    self[:admin] || cached_usergroups.any?(&:admin?)
   end
 
   def hidden?
@@ -175,7 +186,7 @@ class User < ApplicationRecord
 
   def to_label
     name = [firstname, lastname].join(' ')
-    name.present? ? name : login
+    name.presence || login
   end
   alias_method :name, :to_label
 
@@ -209,14 +220,21 @@ class User < ApplicationRecord
   # If the user is not in the DB then try to login the user on each available authentication source
   # If this succeeds then copy the user's details from the authentication source into the User table
   # Returns : User object OR nil
-  def self.try_to_login(login, password)
+  def self.try_to_login(login, password, api_request = false)
     # Make sure no one can sign in with an empty password
     return nil if password.to_s.empty?
 
     # user is already in local database
     if (user = unscoped.find_by_login(login))
       # user has an authentication method and the authentication was successful
-      if user.auth_source && (attrs = user.auth_source.authenticate(login, password))
+      if api_request && user.authenticate_by_personal_access_token(password)
+        logger.debug("Authenticated user #{user.login} with a Personal Access Token.")
+
+        unless user.auth_source.valid_user?(user.login)
+          logger.debug "Failed to find #{user.login} in #{user.auth_source} authentication source"
+          user = nil
+        end
+      elsif user.auth_source && (attrs = user.auth_source.authenticate(login, password))
         logger.debug "Authenticated user #{user.login} against #{user.auth_source} authentication source"
 
         # update with returned attrs, maybe some info changed in LDAP
@@ -225,7 +243,7 @@ class User < ApplicationRecord
           if attrs.is_a? Hash
             valid_attrs = attrs.slice(:firstname, :lastname, :mail, :avatar_hash).delete_if { |k, v| v.blank? }
             logger.debug("Updating user #{user.login} attributes from auth source: #{attrs.keys}")
-            unless user.update_attributes(valid_attrs)
+            unless user.update(valid_attrs)
               logger.warn "Failed to update #{user.login} attributes: #{user.errors.full_messages.join(', ')}"
             end
           end
@@ -234,7 +252,8 @@ class User < ApplicationRecord
 
         # clean up old avatar if it exists and the image isn't in use by anyone else
         if old_hash.present? && user.avatar_hash != old_hash && !User.unscoped.where(:avatar_hash => old_hash).any?
-          File.delete "#{Rails.public_path}/avatars/#{old_hash}.jpg" if File.exist? old_avatar
+          old_avatar = "#{Rails.public_path}/images/avatars/#{old_hash}.jpg"
+          File.delete(old_avatar) if File.exist?(old_avatar)
         end
       else
         logger.debug "Failed to authenticate #{user.login} against #{user.auth_source} authentication source"
@@ -271,7 +290,7 @@ class User < ApplicationRecord
         new_usergroups = user.usergroups.includes(:external_usergroups).where('usergroups.id NOT IN (?)', auth_source_external_groups)
 
         new_usergroups += auth_source.external_usergroups.includes(:usergroup).where(:name => external_groups).map(&:usergroup)
-        user.update_attributes(Hash[attrs.select { |k, v| v.present? }])
+        user.update(Hash[attrs.select { |k, v| v.present? }])
         user.usergroups = new_usergroups.uniq
       end
 
@@ -298,23 +317,27 @@ class User < ApplicationRecord
   end
 
   def set_lower_login
-    self.lower_login = login.downcase unless login.blank?
+    self.lower_login = login.downcase if login.present?
+  end
+
+  def self.fetch_ids_by_list(userlist)
+    User.where(:lower_login => userlist.map(&:downcase)).pluck(:id)
   end
 
   def matching_password?(pass)
-    self.password_hash == encrypt_password(pass)
+    self.password_hash == hash_password(pass)
   end
 
   def my_usergroups
     all_groups = []
-    for usergroup in usergroups
+    usergroups.each do |usergroup|
       all_groups += usergroup.all_usergroups
     end
     all_groups.uniq
   end
 
   def indirect_hosts
-    my_usergroups.map{|g| g.hosts}.flatten.uniq
+    my_usergroups.map {|g| g.hosts}.flatten.uniq
   end
 
   def hosts
@@ -340,7 +363,7 @@ class User < ApplicationRecord
 
   def manage_password?
     return false if self.admin? && !User.current.try(:admin?)
-    auth_source && auth_source.can_set_password?
+    auth_source&.can_set_password?
   end
 
   # Return true if the user is allowed to do the specified action
@@ -361,8 +384,13 @@ class User < ApplicationRecord
   end
 
   # user must be assigned all given roles in order to delegate them
-  def can_assign?(roles)
-    can_change_admin_flag? || roles.all? { |r| self.role_ids_was.include?(r) }
+  # or have :escalate_roles permission
+  def can_assign?(role_ids)
+    can_escalate? || role_ids.all? { |r| self.role_ids_was.include?(r) }
+  end
+
+  def can_escalate?
+    self.admin? || self.can?(:escalate_roles)
   end
 
   # only admin can change admin flag
@@ -381,6 +409,9 @@ class User < ApplicationRecord
       options[:user_id].to_i == self.id &&
       options[:action] =~ /new|create|destroy/ ||
     options[:controller].to_s == 'api/v2/ssh_keys' &&
+      options[:action] =~ /show|destroy|index|create/ &&
+      options[:user_id].to_i == self.id ||
+    options[:controller].to_s == 'api/v2/personal_access_tokens' &&
       options[:action] =~ /show|destroy|index|create/ &&
       options[:user_id].to_i == self.id
   end
@@ -416,11 +447,9 @@ class User < ApplicationRecord
 
   def visible_environments
     authorized_scope = Environment.unscoped.authorized(:view_environments)
-    if Taxonomy.locations_enabled || Taxonomy.organizations_enabled
-      authorized_scope = authorized_scope.
-        joins(:taxable_taxonomies)
-        .where('taxable_taxonomies.taxonomy_id' => taxonomy_ids[:organizations] + taxonomy_ids[:locations])
-    end
+    authorized_scope = authorized_scope
+      .joins(:taxable_taxonomies)
+      .where('taxable_taxonomies.taxonomy_id' => taxonomy_ids[:organizations] + taxonomy_ids[:locations])
     result = authorized_scope.distinct.pluck(:name)
     if User.current.admin?
       # Admin users can also see Environments that do not have any organization or location, even when
@@ -453,7 +482,7 @@ class User < ApplicationRecord
 
   def self.random_password(size = 16)
     set = ('a'..'z').to_a + ('A'..'Z').to_a + ('0'..'9').to_a - %w(0 1 O I l)
-    Array.new(size){ set.sample }.join
+    Array.new(size) { set.sample }.join
   end
 
   def expire_topbar_cache
@@ -474,9 +503,8 @@ class User < ApplicationRecord
     user = new(attrs)
     # Inherit taxonomies from authentication source on creation
     auth_source = AuthSource.find(attrs[:auth_source_id])
-    Taxonomy.enabled_taxonomies.each do |taxonomy|
-      user.public_send("#{taxonomy}=", auth_source.public_send(taxonomy))
-    end
+    user.locations = auth_source.locations
+    user.organizations = auth_source.organizations
 
     # If an invalid data returned from an authentication source for any attribute(s) then set its value as nil
     saved_attrs = {}
@@ -506,19 +534,6 @@ class User < ApplicationRecord
     user
   end
 
-  def password_changed_changed?
-    changed.include?('password_changed')
-  end
-
-  def set_password_changed
-    @password_changed = true
-    attribute_will_change!('password_changed')
-  end
-
-  def unset_password_changed
-    @password_changed = false
-  end
-
   def fullname
     [firstname, lastname].delete_if(&:blank?).join(' ')
   end
@@ -531,12 +546,16 @@ class User < ApplicationRecord
     [self.id]
   end
 
+  def authenticate_by_personal_access_token(token)
+    PersonalAccessToken.authenticate_user(self, token)
+  end
+
   private
 
   def prepare_password
-    unless password.blank?
+    if password.present?
       self.password_salt = Digest::SHA1.hexdigest([Time.now.utc, rand].join)
-      self.password_hash = encrypt_password(password)
+      self.password_hash = hash_password(password)
     end
   end
 
@@ -545,7 +564,7 @@ class User < ApplicationRecord
     MailNotification[:welcome].deliver(:user => self)
   end
 
-  def encrypt_password(pass)
+  def hash_password(pass)
     Digest::SHA1.hexdigest([pass, password_salt].join)
   end
 
@@ -553,8 +572,12 @@ class User < ApplicationRecord
     self.locale = nil if self.respond_to?(:locale) && locale.empty?
   end
 
+  def normalize_timezone
+    self.timezone = nil if timezone.blank?
+  end
+
   def normalize_mail
-    self.mail = mail.strip unless mail.blank?
+    self.mail = mail.strip if mail.present?
   end
 
   def reject_empty_intervals(attributes)
@@ -586,7 +609,7 @@ class User < ApplicationRecord
     if admin && User.unscoped.only_admin.except_hidden.size <= 1
       errors.add :base, _("Can't delete the last admin account")
       logger.warn "Unable to delete the last admin account"
-      false
+      throw :abort
     end
   end
 
@@ -603,7 +626,7 @@ class User < ApplicationRecord
     if auth_source.is_a? AuthSourceHidden
       errors.add :base, _("Can't delete internal admin account")
       logger.warn "Unable to delete internal admin account"
-      false
+      throw :abort
     end
   end
 
@@ -665,6 +688,16 @@ class User < ApplicationRecord
   def hidden_authsource_restricted
     if auth_source_id_changed? && hidden? && ![ANONYMOUS_ADMIN, ANONYMOUS_API_ADMIN, ANONYMOUS_CONSOLE_ADMIN].include?(self.login)
       errors.add :auth_source, _("is not permitted")
+    end
+  end
+
+  def check_permissions_for_changing_login
+    if login_changed? && !self.new_record?
+      if !self.internal?
+        errors.add :login, _("It is not possible to change external users login")
+      elsif !(User.current.can?(:edit_users, self) || (self.id == User.current.id))
+        errors.add :login, _("You do not have permission to edit the login")
+      end
     end
   end
 end

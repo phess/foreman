@@ -1,7 +1,7 @@
 module ProxyAPI
   class DHCP < ProxyAPI::Resource
     def initialize(args)
-      @url  = args[:url] + "/dhcp"
+      @url = args[:url] + "/dhcp"
       super args
     end
 
@@ -29,7 +29,7 @@ module ProxyAPI
         params[:to] = subnet.to
       end
       if params.any?
-        params = "?" + params.map{|e| e.join("=")}.join("&")
+        params = "?" + params.map {|e| e.join("=")}.join("&")
       else
         params = ""
       end

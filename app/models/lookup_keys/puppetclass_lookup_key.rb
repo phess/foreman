@@ -1,5 +1,5 @@
 class PuppetclassLookupKey < LookupKey
-  has_many :environment_classes, :dependent => :destroy
+  has_many :environment_classes, :dependent => :destroy, :inverse_of => :puppetclass_lookup_key
   has_many :environments, -> { distinct }, :through => :environment_classes
   has_many :param_classes, :through => :environment_classes, :source => :puppetclass
 
@@ -16,13 +16,13 @@ class PuppetclassLookupKey < LookupKey
                                            }
 
   scope :parameters_for_class, lambda { |puppetclass_ids, environment_id|
-                                 override.smart_class_parameters_for_class(puppetclass_ids,environment_id)
+                                 override.smart_class_parameters_for_class(puppetclass_ids, environment_id)
                                }
 
   scope :smart_class_parameters, -> { joins(:environment_classes).readonly(false) }
 
   def editable_by_user?
-   PuppetclassLookupKey.authorized(:edit_external_parameters).where(:id => id).exists?
+    PuppetclassLookupKey.authorized(:edit_external_parameters).where(:id => id).exists?
   end
 
   def param_class

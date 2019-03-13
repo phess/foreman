@@ -3,8 +3,8 @@ class Redhat < Operatingsystem
 
   # outputs kickstart installation medium based on the medium type (NFS or URL)
   # it also convert the $arch string to the current host architecture
-  def mediumpath(host)
-    uri = medium_uri(host)
+  def mediumpath(medium_provider)
+    uri = medium_provider.medium_uri
 
     case uri.scheme
       when 'http', 'https', 'ftp'
@@ -29,10 +29,6 @@ class Redhat < Operatingsystem
     "images/pxeboot"
   end
 
-  def url_for_boot(file)
-    pxedir + "/" + PXEFILES[file]
-  end
-
   def display_family
     "Red Hat"
   end
@@ -40,17 +36,17 @@ class Redhat < Operatingsystem
   def self.shorten_description(description)
     return "" if description.blank?
     s = description.dup
-    s.gsub!('Red Hat Enterprise Linux','RHEL')
-    s.gsub!('release','')
-    s.gsub!(/\(.+?\)/,'')
+    s.gsub!('Red Hat Enterprise Linux', 'RHEL')
+    s.gsub!('release', '')
+    s.gsub!(/\(.+?\)/, '')
     s.squeeze! " "
     s.strip!
-    s.blank? ? description : s
+    s.presence || description
   end
 
   def pxe_kernel_options(params)
     options = super
-    options << "modprobe.blacklist=#{params['blacklist'].gsub(' ', '')}" if params['blacklist']
+    options << "modprobe.blacklist=#{params['blacklist'].delete(' ')}" if params['blacklist']
     options
   end
 end

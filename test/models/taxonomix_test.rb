@@ -24,17 +24,11 @@ end
 class TaxonomixTest < ActiveSupport::TestCase
   def setup
     @dummy = TaxonomixDummy.new
-    Taxonomy.stubs(:enabled?).with(:location).returns(false)
-    Taxonomy.stubs(:enabled?).with(:organization).returns(true)
   end
 
   test "STI is properly supported" do
     TaxableTaxonomy.expects(:where).with({ :taxable_type => 'UntaxedDummy' }).returns(TaxableTaxonomy.all)
     InheritingTaxonomixDummy.inner_select(nil, :subtree_ids)
-  end
-
-  test "#add_current_taxonomy? returns false for disabled taxonomy" do
-    refute @dummy.add_current_taxonomy?(:location)
   end
 
   test "#add_current_taxonomy? returns false for unset current taxonomy" do
@@ -57,20 +51,20 @@ class TaxonomixTest < ActiveSupport::TestCase
   test "#set_current_taxonomy" do
     Organization.stubs(:current).returns(taxonomies(:organization1))
     @dummy.set_current_taxonomy
-    assert_includes @dummy.organizations, taxonomies(:organization1)
-    assert_empty @dummy.locations
+    assert_includes @dummy.organization_ids, taxonomies(:organization1).id
+    assert_empty @dummy.location_ids
   end
 
   describe '.with_taxonomy_scope' do
     setup do
-      @org = FactoryGirl.create(:organization)
-      @loc = FactoryGirl.create(:location)
+      @org = FactoryBot.create(:organization)
+      @loc = FactoryBot.create(:location)
     end
 
     test 'expands organizations and locations to actual values' do
-      org2 = FactoryGirl.create(:organization)
-      org3 = FactoryGirl.create(:organization)
-      user = FactoryGirl.create(:user, :organizations => [@org, org2],
+      org2 = FactoryBot.create(:organization)
+      org3 = FactoryBot.create(:organization)
+      user = FactoryBot.create(:user, :organizations => [@org, org2],
                                 :locations => [])
 
       as_user(user) do
@@ -110,10 +104,10 @@ class TaxonomixTest < ActiveSupport::TestCase
   end
 
   test ".used_location_ids can work with array of locations" do
-    loc1 = FactoryGirl.create(:location)
-    loc2 = FactoryGirl.create(:location, :parent_id => loc1.id)
-    loc3 = FactoryGirl.create(:location, :parent_id => loc2.id)
-    loc4 = FactoryGirl.create(:location)
+    loc1 = FactoryBot.create(:location)
+    loc2 = FactoryBot.create(:location, :parent_id => loc1.id)
+    loc3 = FactoryBot.create(:location, :parent_id => loc2.id)
+    loc4 = FactoryBot.create(:location)
     dummy_class = @dummy.class
     dummy_class.which_ancestry_method = :subtree_ids
 
@@ -137,10 +131,10 @@ class TaxonomixTest < ActiveSupport::TestCase
   end
 
   test ".used_organization_ids can work with array of organizations" do
-    org1 = FactoryGirl.create(:organization)
-    org2 = FactoryGirl.create(:organization, :parent_id => org1.id)
-    org3 = FactoryGirl.create(:organization, :parent_id => org2.id)
-    org4 = FactoryGirl.create(:organization)
+    org1 = FactoryBot.create(:organization)
+    org2 = FactoryBot.create(:organization, :parent_id => org1.id)
+    org3 = FactoryBot.create(:organization, :parent_id => org2.id)
+    org4 = FactoryBot.create(:organization)
     dummy_class = @dummy.class
     dummy_class.which_ancestry_method = :subtree_ids
 
@@ -189,11 +183,11 @@ class TaxonomixTest < ActiveSupport::TestCase
     end
 
     test 'list only users from the organization and myself but not global admins' do
-      loc = FactoryGirl.create(:location)
-      org = FactoryGirl.create(:organization)
-      user1 = FactoryGirl.create(:user, :organizations => [org], :locations => [loc])
-      user2 = FactoryGirl.create(:user, :organizations => [org], :locations => [loc])
-      admin = FactoryGirl.create(:user, :admin)
+      loc = FactoryBot.create(:location)
+      org = FactoryBot.create(:organization)
+      user1 = FactoryBot.create(:user, :organizations => [org], :locations => [loc])
+      user2 = FactoryBot.create(:user, :organizations => [org], :locations => [loc])
+      admin = FactoryBot.create(:user, :admin)
 
       as_user(user1) do
         found_ids = User.taxable_ids(loc, org)
@@ -204,17 +198,17 @@ class TaxonomixTest < ActiveSupport::TestCase
     end
 
     test "can work with array of taxonomies" do
-      loc1 = FactoryGirl.create(:location)
-      loc2 = FactoryGirl.create(:location, :parent_id => loc1.id)
-      loc3 = FactoryGirl.create(:location, :parent_id => loc2.id)
-      loc4 = FactoryGirl.create(:location)
-      org = FactoryGirl.create(:organization)
-      env1 = FactoryGirl.create(:environment, :organizations => [org], :locations => [loc2])
-      env2 = FactoryGirl.create(:environment, :organizations => [org])
-      env3 = FactoryGirl.create(:environment, :locations => [loc2])
-      env4 = FactoryGirl.create(:environment, :locations => [loc4])
-      env5 = FactoryGirl.create(:environment, :locations => [loc1])
-      env6 = FactoryGirl.create(:environment, :locations => [loc3])
+      loc1 = FactoryBot.create(:location)
+      loc2 = FactoryBot.create(:location, :parent_id => loc1.id)
+      loc3 = FactoryBot.create(:location, :parent_id => loc2.id)
+      loc4 = FactoryBot.create(:location)
+      org = FactoryBot.create(:organization)
+      env1 = FactoryBot.create(:environment, :organizations => [org], :locations => [loc2])
+      env2 = FactoryBot.create(:environment, :organizations => [org])
+      env3 = FactoryBot.create(:environment, :locations => [loc2])
+      env4 = FactoryBot.create(:environment, :locations => [loc4])
+      env5 = FactoryBot.create(:environment, :locations => [loc1])
+      env6 = FactoryBot.create(:environment, :locations => [loc3])
       taxable_ids = Environment.taxable_ids([loc2, loc4], org, :subtree_ids)
       visible = [ env1 ]
       invisible = [ env2, env3, env4, env5, env6 ]
@@ -242,24 +236,24 @@ class TaxonomixTest < ActiveSupport::TestCase
   end
 
   test "validation does not prevent taxonomy association if user does not have permissions of already assigned taxonomies" do
-    filter = FactoryGirl.create(:filter, :search => 'name ~ visible*')
+    filter = FactoryBot.create(:filter, :search => 'name ~ visible*')
     filter.permissions = Permission.where(:name => [ 'view_organizations', 'assign_organizations' ])
-    role = FactoryGirl.create(:role)
+    role = FactoryBot.create(:role)
     role.filters = [ filter ]
 
-    filter2 = FactoryGirl.create(:filter)
+    filter2 = FactoryBot.create(:filter)
     filter2.permissions = Permission.where(:name => [ 'edit_domains' ])
-    role2 = FactoryGirl.create(:role)
+    role2 = FactoryBot.create(:role)
     role2.filters = [ filter2 ]
 
-    user = FactoryGirl.create(:user)
+    user = FactoryBot.create(:user)
     user.roles = [ role, role2 ]
-    org1 = FactoryGirl.create :organization, :name => 'visible1'
-    org2 = FactoryGirl.create :organization, :name => 'visible2'
-    org3 = FactoryGirl.create :organization, :name => 'hidden'
+    org1 = FactoryBot.create :organization, :name => 'visible1'
+    org2 = FactoryBot.create :organization, :name => 'visible2'
+    org3 = FactoryBot.create :organization, :name => 'hidden'
     user.organizations = [ org1 ]
 
-    resource = FactoryGirl.create(:domain, :organizations => [ org1, org3 ])
+    resource = FactoryBot.create(:domain, :organizations => [ org1, org3 ])
     assert_includes resource.organizations, org3
 
     as_user user do
@@ -273,8 +267,8 @@ class TaxonomixTest < ActiveSupport::TestCase
   end
 
   test "default scope does not set create scope attributes" do
-    org = FactoryGirl.create :organization
-    FactoryGirl.create(:domain, :organizations => [ org ])
+    org = FactoryBot.create :organization
+    FactoryBot.create(:domain, :organizations => [ org ])
     original_org, Organization.current = Organization.current, org
     new_dom = Domain.new(:organization_ids => [ org.id ])
     Organization.current = original_org
@@ -283,14 +277,14 @@ class TaxonomixTest < ActiveSupport::TestCase
   end
 
   test "#taxable_ids works even if the resources uses eager loading on through associations" do
-    user = FactoryGirl.create(:user)
-    filter = FactoryGirl.create(:filter)
+    user = FactoryBot.create(:user)
+    filter = FactoryBot.create(:filter)
     filter.permissions = Permission.where(:name => [ 'view_provisioning_templates' ])
-    role = FactoryGirl.create(:role, :filters => [ filter ])
+    role = FactoryBot.create(:role, :filters => [ filter ])
 
-    user = FactoryGirl.create(:user)
+    user = FactoryBot.create(:user)
     user.roles = [ role ]
-    org = FactoryGirl.create :organization, :ignore_types => [ 'Hostgroup' ]
+    org = FactoryBot.create :organization, :ignore_types => [ 'Hostgroup' ]
     user.organizations = [ org ]
 
     in_taxonomy org do
@@ -305,9 +299,9 @@ class TaxonomixTest < ActiveSupport::TestCase
   test "#admin_ids finds admins both assigned the permission directly and through user group" do
     direct_admin = group_admin = nil
     as_admin do
-      direct_admin = FactoryGirl.create(:user, :admin)
-      group = FactoryGirl.create(:usergroup, :admin => true)
-      group_admin = FactoryGirl.create(:user, :usergroups => [ group ])
+      direct_admin = FactoryBot.create(:user, :admin)
+      group = FactoryBot.create(:usergroup, :admin => true)
+      group_admin = FactoryBot.create(:user, :usergroups => [ group ])
     end
 
     found_admins = User.admin_ids
@@ -316,10 +310,10 @@ class TaxonomixTest < ActiveSupport::TestCase
   end
 
   test "#used_organization_ids should not return organization for user with same id as of user_group which is assigned to host as owner." do
-    org = FactoryGirl.create(:organization)
-    user = FactoryGirl.create(:user, :id => 25, :organizations => [org])
-    ugroup = FactoryGirl.create(:usergroup, :id=> 25)
-    FactoryGirl.create(:host, :owner => ugroup, :organization => org)
+    org = FactoryBot.create(:organization)
+    user = FactoryBot.create(:user, :id => 25, :organizations => [org])
+    ugroup = FactoryBot.create(:usergroup, :id => 25)
+    FactoryBot.create(:host, :owner => ugroup, :organization => org)
     as_admin do
       used_organizations = user.used_organization_ids
       assert_empty used_organizations
@@ -337,13 +331,13 @@ class TaxonomixTest < ActiveSupport::TestCase
     end
 
     test "returns nil (all objects) when there are no org/loc" do
-      assert_equal User.with_taxonomy_scope([],[]).sort, User.unscoped.all.sort
+      assert_equal User.with_taxonomy_scope([], []).sort, User.unscoped.all.sort
     end
   end
 
   test 'current user ID and admin IDs are always visible' do
     as_user(:one) do
-      scoped_users = User.with_taxonomy_scope([],[])
+      scoped_users = User.with_taxonomy_scope([], [])
       assert_include scoped_users, User.current
     end
   end
@@ -354,7 +348,7 @@ class TaxonomixTest < ActiveSupport::TestCase
       # who is scoped to organization 1 and location 2
       users(:one).organizations = [taxonomies(:organization1)]
       users(:one).locations = [taxonomies(:location2)]
-      @unreachable_env = FactoryGirl.create(
+      @unreachable_env = FactoryBot.create(
         :environment,
         :organizations => [taxonomies(:organization1)],
         :locations => [taxonomies(:location1)])
@@ -368,7 +362,10 @@ class TaxonomixTest < ActiveSupport::TestCase
 
     context 'via resource association' do
       setup do
-        @hg = FactoryGirl.create(:hostgroup, environment: @unreachable_env, locations: [taxonomies(:location2)], organizations: [taxonomies(:organization1)])
+        @hg = FactoryBot.create(:hostgroup, environment: @unreachable_env, locations: [taxonomies(:location2)], organizations: [taxonomies(:organization1)])
+        # factory corrected environment taxonomy - put it outside of user one
+        @unreachable_env.organizations = [taxonomies(:organization1)]
+        @unreachable_env.locations = [taxonomies(:location1)]
       end
 
       test 'via resource association with no reachable environments' do
@@ -383,7 +380,7 @@ class TaxonomixTest < ActiveSupport::TestCase
       test 'via resource association with other reachable environments' do
         # Create a reachable environment too, as scope_by_taxable_ids has a separate code path when
         # one or more resources are visible to the user
-        FactoryGirl.create(:environment,
+        FactoryBot.create(:environment,
           :organizations => [taxonomies(:organization1)],
           :locations => [taxonomies(:location2)])
 

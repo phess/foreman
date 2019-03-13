@@ -7,13 +7,14 @@ module HasManyCommon
 
   # calls method :name or whatever is defined in attr_name :title
   def name_method
-    send(self.class.attribute_name)
+    send(self.class.attribute_name).to_s
   end
 
   module ClassMethods
     # default attribute used by *_names and *_name is :name
-    # if :name doesn't exist, :id is used, so it doesn't error out if attr_name :field is not defined
-    # most likely model will have attr_name :field to overwrite attribute_name
+    # if :name doesn't exist, :id as a string is used, so it doesn't error out
+    # if attr_name :field is not defined most likely model will have attr_name
+    # :field to overwrite attribute_name
     def attribute_name
       if has_name?
         :name
@@ -65,7 +66,7 @@ module HasManyCommon
 
       # GETTER _names method
       define_method "#{assoc}_names" do
-        assoc_klass(association).where(:id => send("#{assoc}_ids")).map { |res| res.name_method }
+        self.send(association).map(&:name_method)
       end
     end
 
@@ -83,15 +84,16 @@ module HasManyCommon
       # SETTER _name= method
       define_method "#{assoc_name}=" do |name_value|
         assoc_id = assoc_klass(association).send("find_by_#{assoc_klass(association).attribute_name}", name_value).try(:id)
-        raise Foreman::AssociationNotFound
-                .new(_("Could not find %{association} with name: %{name}") % { name: name_value, association: association }) unless assoc_id
+        unless assoc_id
+          raise Foreman::AssociationNotFound
+                  .new(_("Could not find %{association} with name: %{name}") % { name: name_value, association: association })
+        end
         self.send("#{assoc}_id=", assoc_id)
       end
 
       # GETTER _name method
       define_method assoc_name do
-        assoc_id = self.send("#{assoc}_id")
-        assoc_klass(association).find_by_id(assoc_id).try(:name_method)
+        self.send(association).try(:name_method)
       end
     end
   end

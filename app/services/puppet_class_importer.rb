@@ -78,9 +78,9 @@ class PuppetClassImporter
       end
     end
     []
-    #rescue => e
-    #  logger.error(e)
-    #  [e.to_s]
+  rescue => e
+    Foreman::Logging.exception('Failed to calculate obsolete and new', e)
+    [e.to_s]
   end
 
   # Returns all classes for a given environment
@@ -240,7 +240,7 @@ class PuppetClassImporter
   def ignored_file
     @ignored_file ||= load_ignored_file
   rescue => e
-    logger.warn "Failed to parse environment ignore file: #{e}"
+    Foreman::Logging.exception('Failed to parse environment ignore file', e)
     @ignored_file = { }
   end
 
@@ -254,10 +254,12 @@ class PuppetClassImporter
 
   def add_classes_to_foreman(env_name, klasses)
     env         = find_or_create_env env_name
-    new_classes = klasses.map { |k| Puppetclass.where(:name => k[0]).first_or_create }
+    # look for Puppet class in all scopes to make sure we do not try to create a new record
+    # with a name that already exists and hit the uniqueness constraint on name
+    new_classes = klasses.map { |k| find_or_create_puppetclass(name: k[0]) }
 
     new_classes.each do |new_class|
-      EnvironmentClass.create! :puppetclass_id => new_class.id, :environment_id => env.id
+      EnvironmentClass.find_or_create_by! :puppetclass_id => new_class.id, :environment_id => env.id
       class_params = klasses[new_class.to_s]
       add_new_parameter(env, new_class, class_params) if class_params.any?
     end
@@ -295,7 +297,7 @@ class PuppetClassImporter
       key_in_env = EnvironmentClass.key_in_environment(env, db_class, key)
 
       if key && key_in_env
-        #detach
+        # detach
         key_in_env.destroy
         # destroy if the key is not in any environment.
         key.destroy unless EnvironmentClass.is_in_any_environment(db_class, key)
@@ -306,7 +308,7 @@ class PuppetClassImporter
   def add_new_parameter(env, klass, changed_params)
     changed_params["new"].map do |param_name, value|
       param = find_or_create_puppet_class_param klass, param_name, value
-      EnvironmentClass.create! :puppetclass_id => klass.id, :environment_id => env.id,
+      EnvironmentClass.find_or_create_by! :puppetclass_id => klass.id, :environment_id => env.id,
         :puppetclass_lookup_key_id => param.id
     end
   end
@@ -330,15 +332,25 @@ class PuppetClassImporter
   end
 
   def find_or_create_env(env)
-    Environment.where(:name => env).first || Environment.create!(:name => env,
+    user_visible_environment(env) || Environment.create!(:name => env,
                                                                  :organizations => User.current.my_organizations,
                                                                  :locations => User.current.my_locations)
   end
 
+  def user_visible_environment(env)
+    return unless User.current.visible_environments.include? env
+    Environment.unscoped.find_by :name => env
+  end
+
   def find_or_create_puppet_class_param(klass, param_name, value)
     klass.class_params.where(:key => param_name).first ||
-      PuppetclassLookupKey.create!(:key => param_name, :required => value.nil?,
-                                   :override => value.nil?, :default_value => value,
+      PuppetclassLookupKey.create!(:key => param_name, :default_value => value,
                                    :key_type => Foreman::ImporterPuppetclass.suggest_key_type(value))
+  end
+
+  def find_or_create_puppetclass(name:)
+    puppetclass = Puppetclass.unscoped.find_or_create_by!(name: name)
+    raise Foreman::Exception.new('Failed to create Puppetclass: %s', puppetclass.errors.full_messages.to_sentence) unless puppetclass.errors.empty?
+    puppetclass
   end
 end

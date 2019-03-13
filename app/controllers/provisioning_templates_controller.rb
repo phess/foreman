@@ -3,9 +3,9 @@ class ProvisioningTemplatesController < TemplatesController
   helper_method :documentation_anchor
 
   def build_pxe_default
-    status, msg = ProvisioningTemplate.authorized(:deploy_provisioning_templates).build_pxe_default(self)
-    status == :ok ? notice(msg) : error(msg)
-    redirect_to :back
+    status, msg = ProvisioningTemplate.authorized(:deploy_provisioning_templates).build_pxe_default
+    (status == :ok) ? success(msg) : error(msg)
+    redirect_back(fallback_location: provisioning_templates_path)
   end
 
   def documentation_anchor

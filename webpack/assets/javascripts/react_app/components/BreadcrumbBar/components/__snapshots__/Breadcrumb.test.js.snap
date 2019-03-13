@@ -1,0 +1,85 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Breadcrumbs renders breadcrumbs menu 1`] = `
+<Breadcrumb
+  title={false}
+>
+  <BreadcrumbItem
+    active={false}
+    href="/some-url"
+    key="0"
+    title="root"
+  >
+     
+    root
+  </BreadcrumbItem>
+  <BreadcrumbItem
+    active={false}
+    key="1"
+    onClick={[MockFunction]}
+    title="child with onClick"
+  >
+     
+    child with onClick
+  </BreadcrumbItem>
+  <BreadcrumbItem
+    active={true}
+    key="2"
+    title="active child"
+  >
+     
+    <EllipisWithTooltip
+      placement="bottom"
+    >
+      active child
+    </EllipisWithTooltip>
+  </BreadcrumbItem>
+</Breadcrumb>
+`;
+
+exports[`Breadcrumbs renders h1 title 1`] = `
+<Breadcrumb
+  title={false}
+>
+  <BreadcrumbItem
+    active={true}
+    key="0"
+    title="title"
+  >
+     
+    <EllipisWithTooltip
+      placement="bottom"
+    >
+      title
+    </EllipisWithTooltip>
+  </BreadcrumbItem>
+</Breadcrumb>
+`;
+
+exports[`Breadcrumbs renders title override 1`] = `
+<Breadcrumb
+  title={false}
+>
+  <BreadcrumbItem
+    active={false}
+    href="/some-url"
+    key="0"
+    title="root"
+  >
+     
+    root
+  </BreadcrumbItem>
+  <BreadcrumbItem
+    active={true}
+    key="1"
+    title="override title"
+  >
+     
+    <EllipisWithTooltip
+      placement="bottom"
+    >
+      override title
+    </EllipisWithTooltip>
+  </BreadcrumbItem>
+</Breadcrumb>
+`;

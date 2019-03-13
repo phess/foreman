@@ -30,9 +30,9 @@ class SmartProxiesController < ApplicationController
   end
 
   def refresh
-    old_features = @smart_proxy.features.to_a
+    old_features = @smart_proxy.feature_details
     if @smart_proxy.refresh.blank? && @smart_proxy.save
-      msg = @smart_proxy.features.to_a == old_features ? _("No changes found when refreshing features from %s.") : _("Successfully refreshed features from %s.")
+      msg = (@smart_proxy.reload.feature_details == old_features) ? _("No changes found when refreshing features from %s.") : _("Successfully refreshed features from %s.")
       process_success :object => @smart_proxy, :success_msg => msg % @smart_proxy.name
     else
       process_error :object => @smart_proxy
@@ -41,7 +41,9 @@ class SmartProxiesController < ApplicationController
 
   def ping
     requested_data do
-      @proxy_status[:version].version
+      versions_hash = @proxy_status[:version].version
+      versions_hash[:warning] = version_mismatch_warning(versions_hash) if versions_mismatched?(versions_hash)
+      versions_hash
     end
   end
 
@@ -69,7 +71,7 @@ class SmartProxiesController < ApplicationController
   end
 
   def update
-    if @smart_proxy.update_attributes(smart_proxy_params)
+    if @smart_proxy.update(smart_proxy_params)
       process_success :object => @smart_proxy
     else
       process_error :object => @smart_proxy
@@ -105,7 +107,8 @@ class SmartProxiesController < ApplicationController
 
   def failed_modules
     modules = @smart_proxy.statuses[:logs].logs.failed_modules || {}
-    render :partial => 'smart_proxies/logs/failed_modules', :locals => {:modules => modules}
+    name_map = Feature.name_map.each_with_object({}) {|(k, v), h| h[k] = v.name }
+    render :partial => 'smart_proxies/logs/failed_modules', :locals => {:modules => modules, :name_map => name_map}
   rescue Foreman::Exception => exception
     process_ajax_error exception
   end
@@ -158,5 +161,35 @@ class SmartProxiesController < ApplicationController
     base = base.eager_load(:locations) if SETTINGS[:locations_enabled]
     base = base.eager_load(:organizations) if SETTINGS[:organizations_enabled]
     base
+  end
+
+  def versions_mismatched?(proxy_versions_hash)
+    # we expect here the result of /versions proxy API call.
+    # It's structure is similar to: {:version => Proxy::VERSION, :modules => modules}.to_json
+    foreman_version = Foreman::Version.new
+    proxy_version = Foreman::Version.new(proxy_versions_hash['version'])
+
+    foreman_major = foreman_version.major.to_i
+    foreman_minor = foreman_version.minor.to_i
+
+    proxy_major = proxy_version.major.to_i
+    proxy_minor = proxy_version.minor.to_i
+
+    # foreman <-> proxy:
+    # 1.18.1 <-> 1.18.0 : OK
+    # 1.18.0 <-> 1.19.0 : OK
+    # 1.19.0 <-> 1.18.0 : Warn
+    # 1.18.0 <-> 1.20.0 : Warn
+    foreman_major != proxy_major ||
+      foreman_minor > proxy_minor ||
+      foreman_minor + 1 < proxy_minor
+  end
+
+  def version_mismatch_warning(proxy_versions_hash)
+    foreman_version = Foreman::Version.new.notag
+
+    {
+      :message => _('Core and proxy versions do not match. foreman: %{foreman_version}, foreman-proxy: %{proxy_version}') % {foreman_version: foreman_version, proxy_version: proxy_versions_hash['version']}
+    }
   end
 end

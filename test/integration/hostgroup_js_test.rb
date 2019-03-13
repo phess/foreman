@@ -3,11 +3,13 @@ require 'integration_test_helper'
 class HostgroupJSTest < IntegrationTestWithJavascript
   # intermittent failures:
   #   HostgroupJSTest.test_0001_submit updates taxonomy
-  extend Minitest::OptionalRetry
+  test "index page" do
+    assert_index_page(hostgroups_path, "Host Groups", "Create Host Group")
+  end
 
   test 'creates a hostgroup with provisioning data' do
-    env = FactoryGirl.create(:environment)
-    os = FactoryGirl.create(:ubuntu14_10, :with_associations)
+    env = FactoryBot.create(:environment)
+    os = FactoryBot.create(:ubuntu14_10, :with_associations)
     visit new_hostgroup_path
 
     fill_in 'hostgroup_name', :with => 'myhostgroup1'
@@ -28,12 +30,13 @@ class HostgroupJSTest < IntegrationTestWithJavascript
     host = Hostgroup.where(:name => "myhostgroup1").first
     assert host
     assert_equal env.name, host.environment.name
+    assert page.has_current_path? hostgroups_path
   end
 
   describe 'edit form' do
     setup do
-      @hostgroup = FactoryGirl.create(:hostgroup, :with_puppetclass)
-      @another_puppetclass = FactoryGirl.create(:puppetclass)
+      @hostgroup = FactoryBot.create(:hostgroup, :with_puppetclass)
+      @another_puppetclass = FactoryBot.create(:puppetclass)
     end
 
     context 'puppet classes are not available in the environment' do
@@ -84,16 +87,16 @@ class HostgroupJSTest < IntegrationTestWithJavascript
   end
 
   test 'submit updates taxonomy' do
-    group = FactoryGirl.create(:hostgroup, :with_puppetclass)
-    new_location = FactoryGirl.create(:location)
+    group = FactoryBot.create(:hostgroup, :with_puppetclass)
+    new_location = FactoryBot.create(:location)
 
     visit edit_hostgroup_path(group)
     page.find(:css, "a[href='#locations']").click
     select_from_list 'hostgroup_location_ids', new_location
 
     click_button "Submit"
-    #wait for submit to finish
-    page.find('#search-form')
+    # wait for submit to finish
+    page.find('#search-bar')
 
     group.locations.reload
 
@@ -101,9 +104,9 @@ class HostgroupJSTest < IntegrationTestWithJavascript
   end
 
   test 'parameters change after parent update' do
-    group = FactoryGirl.create(:hostgroup)
+    group = FactoryBot.create(:hostgroup)
     group.group_parameters << GroupParameter.create(:name => "x", :value => "original")
-    child = FactoryGirl.create(:hostgroup)
+    child = FactoryBot.create(:hostgroup)
 
     visit clone_hostgroup_path(child)
     assert page.has_link?('Parameters', :href => '#params')
@@ -121,8 +124,8 @@ class HostgroupJSTest < IntegrationTestWithJavascript
   describe 'Puppet Classes tab' do
     context 'has inherited Puppetclasses' do
       setup do
-        @hostgroup = FactoryGirl.create(:hostgroup, :with_puppetclass)
-        @child_hostgroup = FactoryGirl.create(:hostgroup, parent: @hostgroup)
+        @hostgroup = FactoryBot.create(:hostgroup, :with_puppetclass)
+        @child_hostgroup = FactoryBot.create(:hostgroup, parent: @hostgroup)
 
         visit edit_hostgroup_path(@child_hostgroup)
         page.find(:link, 'Puppet Classes', href: '#puppet_klasses').click

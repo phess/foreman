@@ -2,11 +2,7 @@ require 'integration_test_helper'
 
 class PtableIntegrationTest < ActionDispatch::IntegrationTest
   setup do
-    @ptable = FactoryGirl.create(:ptable, :ubuntu, :name => 'ubuntu default')
-  end
-
-  test "index page" do
-    assert_index_page(ptables_path,"Partition Tables","Create Partition Table")
+    @ptable = FactoryBot.create(:ptable, :ubuntu, :name => 'ubuntu default')
   end
 
   test "edit page" do
@@ -27,6 +23,6 @@ class PtableIntegrationTest < ActionDispatch::IntegrationTest
 
     assert page.has_link? 'debian.default /dev/sda'
     click_link "debian.default /dev/sda"
-    assert page.has_field?("ptable_name") #not 404
+    assert page.has_field?("ptable_name") # not 404
   end
 end

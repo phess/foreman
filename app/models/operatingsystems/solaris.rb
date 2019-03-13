@@ -2,11 +2,11 @@ class Solaris < Operatingsystem
   PXEFILES = {:initrd => "x86.miniroot", :kernel => "multiboot"}
 
   def file_prefix
-    (self).to_s.gsub(/[\s\(\)]/,"-").gsub("--", "-").gsub(/-\Z/, "")
+    self.to_s.gsub(/[\s\(\)]/, "-").gsub("--", "-").gsub(/-\Z/, "")
   end
 
   # sets the prefix for the tftp files based on the OS
-  def pxe_prefix(architecture = nil)
+  def pxe_prefix(_medium_provider)
     "boot/#{file_prefix}"
   end
 
@@ -23,16 +23,16 @@ class Solaris < Operatingsystem
     ["None"]
   end
 
+  def dhcp_record_type
+    Net::DHCP::SparcRecord
+  end
+
   def template_kinds
     ["PXEGrub"]
   end
 
   def pxedir
-    "Solaris_#{minor}/Tools/Boot"
-  end
-
-  def url_for_boot(file)
-    pxedir + "/" + PXEFILES[file]
+    "Solaris_$minor/Tools/Boot"
   end
 
   def boot_filename(host)
@@ -48,7 +48,7 @@ class Solaris < Operatingsystem
   end
 
   # If this OS family requires access to its media via NFS
-  def require_nfs_access_to_medium
+  def self.require_nfs_access_to_medium
     true
   end
 
@@ -77,11 +77,12 @@ class Solaris < Operatingsystem
   end
 
   def jumpstart_params(host, vendor)
+    medium_provider = Foreman::Plugin.medium_providers.find_provider(host)
     # root server and install server are always the same under Foreman
     server_name = host.medium.media_host
     server_ip   = host.domain.resolver.getaddress(server_name).to_s
     jpath       = jumpstart_path host.medium, host.domain
-    ipath       = interpolate_medium_vars(host.medium.media_dir, host.architecture.name, self)
+    ipath       = medium_provider.interpolate_vars(host.medium.media_dir).to_s
 
     {
       :vendor => "<#{vendor}>",

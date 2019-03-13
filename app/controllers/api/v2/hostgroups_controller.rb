@@ -2,13 +2,13 @@ module Api
   module V2
     class HostgroupsController < V2::BaseController
       include Api::Version2
-      include Api::TaxonomyScope
       include Foreman::Controller::Parameters::Hostgroup
       include ParameterAttributes
 
       before_action :find_optional_nested_object
       before_action :find_resource, :only => %w{show update destroy clone rebuild_config}
       before_action :process_parameter_attributes, :only => %w{update}
+      before_action :include_parameters_in_response, :only => %w{show create update}
 
       api :GET, "/hostgroups/", N_("List all host groups")
       api :GET, "/puppetclasses/:puppetclass_id/hostgroups", N_("List all host groups for a Puppet class")
@@ -18,6 +18,7 @@ module Api
       param_group :taxonomy_scope, ::Api::V2::BaseController
       param_group :search_and_pagination, ::Api::V2::BaseController
       param :include, Array, :in => ['parameters'], :desc => N_("Array of extra information types to include")
+      add_scoped_search_description_for(Hostgroup)
 
       def index
         @hostgroups = resource_scope_for_index
@@ -32,7 +33,6 @@ module Api
       param :show_hidden_parameters, :bool, :desc => N_("Display hidden parameter values")
 
       def show
-        @parameters = true
       end
 
       def_param_group :hostgroup do
@@ -42,16 +42,18 @@ module Api
           param :parent_id, :number, :desc => N_('Parent ID of the host group')
           param :environment_id, :number, :desc => N_('Environment ID')
           param :compute_profile_id, :number, :desc => N_('Compute profile ID')
+          param :compute_resource_id, :number, :desc => N_('Compute resource ID')
           param :operatingsystem_id, :number, :desc => N_('Operating system ID')
           param :architecture_id, :number, :desc => N_('Architecture ID')
           param :pxe_loader, Operatingsystem.all_loaders, :desc => N_("DHCP filename option (Grub2/PXELinux by default)")
           param :medium_id, :number, :desc => N_('Media ID')
           param :ptable_id, :number, :desc => N_('Partition table ID')
           param :subnet_id, :number, :desc => N_('Subnet ID')
+          param :subnet6_id, :number, :desc => N_('Subnet IPv6 ID')
           param :domain_id, :number, :desc => N_('Domain ID')
           param :realm_id, :number, :desc => N_('Realm ID')
           param :config_group_ids, Array, :desc => N_("IDs of associated config groups")
-          param :group_parameters_attributes, Array, :required => false, :desc => N_("Array of parameters")  do
+          param :group_parameters_attributes, Array, :required => false, :desc => N_("Array of parameters") do
             param :name, String, :desc => N_("Name of the parameter"), :required => true
             param :value, String, :desc => N_("Parameter value"), :required => true
           end
@@ -67,8 +69,6 @@ module Api
       param_group :hostgroup, :as => :create
 
       def create
-        @parameters = true
-
         @hostgroup = Hostgroup.new(hostgroup_params)
         @hostgroup.suggest_default_pxe_loader if params[:hostgroup] && params[:hostgroup][:pxe_loader].nil?
 
@@ -80,9 +80,7 @@ module Api
       param_group :hostgroup
 
       def update
-        @parameters = true
-
-        process_response @hostgroup.update_attributes(hostgroup_params)
+        process_response @hostgroup.update(hostgroup_params)
       end
 
       api :DELETE, "/hostgroups/:id/", N_("Delete a host group")
@@ -112,7 +110,7 @@ module Api
         results = @hostgroup.recreate_hosts_config(params[:only], params[:children_hosts])
         failures = []
         results.each_pair do |host, result|
-          host_failures = result.reject { |key, value| value }.keys.map{ |k| _(k) }
+          host_failures = result.reject { |key, value| value }.keys.map { |k| _(k) }
           failures << "#{host}(#{host_failures.to_sentence})" unless host_failures.empty?
         end
         if failures.empty?
@@ -124,6 +122,10 @@ module Api
       end
 
       private
+
+      def include_parameters_in_response
+        @parameters = true
+      end
 
       def action_permission
         case params[:action]

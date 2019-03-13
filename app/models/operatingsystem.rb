@@ -2,6 +2,7 @@ require 'ostruct'
 require 'uri'
 
 class Operatingsystem < ApplicationRecord
+  audited
   include Authorizable
   include ValidateOsFamily
   include PxeLoaderSupport
@@ -35,12 +36,12 @@ class Operatingsystem < ApplicationRecord
             :uniqueness => { :scope => [:major, :minor], :message => N_("Operating system version already exists")}
   validates :description, :uniqueness => true, :allow_blank => true
   validates :password_hash, :inclusion => { :in => PasswordCrypt::ALGORITHMS }
+  validates :release_name, :presence => true, :if => Proc.new { |os| os.family == 'Debian' }
   before_validation :downcase_release_name, :set_title, :stringify_major_and_minor
   validates :title, :uniqueness => true, :presence => true
 
-  before_save :set_family
+  before_validation :set_family
 
-  audited
   default_scope -> { order(:title) }
 
   scoped_search :on => :name,        :complete_value => :true
@@ -53,7 +54,7 @@ class Operatingsystem < ApplicationRecord
   scoped_search :relation => :architectures,    :on => :name,  :complete_value => :true, :rename => "architecture", :only_explicit => true
   scoped_search :relation => :media,            :on => :name,  :complete_value => :true, :rename => "medium", :only_explicit => true
   scoped_search :relation => :provisioning_templates, :on => :name, :complete_value => :true, :rename => "template", :only_explicit => true
-  scoped_search :relation => :os_parameters, :on => :value, :on_key=> :name, :complete_value => true, :rename => :params, :only_explicit => true
+  scoped_search :relation => :os_parameters, :on => :value, :on_key => :name, :complete_value => true, :rename => :params, :only_explicit => true
 
   FAMILIES = { 'Debian'    => %r{Debian|Ubuntu}i,
                'Redhat'    => %r{RedHat|Centos|Fedora|Scientific|SLC|OracleLinux}i,
@@ -62,16 +63,26 @@ class Operatingsystem < ApplicationRecord
                'Altlinux'  => %r{Altlinux}i,
                'Archlinux' => %r{Archlinux}i,
                'Coreos'    => %r{CoreOS}i,
+               'Rancheros' => %r{RancherOS}i,
                'Gentoo'    => %r{Gentoo}i,
                'Solaris'   => %r{Solaris}i,
                'Freebsd'   => %r{FreeBSD}i,
                'AIX'       => %r{AIX}i,
                'Junos'     => %r{Junos}i,
+               'VRP'       => %r{VRP}i,
                'NXOS'      => %r{NX-OS}i,
                'Xenserver' => %r{XenServer}i }
 
   class Jail < Safemode::Jail
-    allow :name, :media_url, :major, :minor, :family, :to_s, :repos, :==, :release_name, :kernel, :initrd, :pxe_type, :medium_uri, :boot_files_uri, :password_hash
+    allow :name, :media_url, :major, :minor, :family, :to_s, :repos, :==, :release, :release_name, :kernel, :initrd, :pxe_type, :medium_uri, :boot_files_uri, :password_hash
+  end
+
+  def self.title_name
+    "title".freeze
+  end
+
+  def additional_media(medium_provider)
+    medium_provider.additional_media.map(&:with_indifferent_access)
   end
 
   def self.inherited(child)
@@ -92,7 +103,7 @@ class Operatingsystem < ApplicationRecord
   # family are the same thing then rails converts the record to a Debian or a solaris object as required.
   # Manually managing the 'type' field allows us to control the inheritance chain and the available methods
   def family
-    read_attribute(:type)
+    self[:type]
   end
 
   def family=(value)
@@ -110,6 +121,11 @@ class Operatingsystem < ApplicationRecord
     end
   end
 
+  # DEPRECATED - This will be removed in 1.22.
+  #
+  # This method is deprecated in favor of the additional media features of
+  # medium providers.
+  #
   # Operating system family can override this method to provide an array of
   # hashes, each describing a repository. For example, to describe a yum repo,
   # the following structure can be returned by the method:
@@ -121,25 +137,6 @@ class Operatingsystem < ApplicationRecord
   #  }]
   def repos(host)
     []
-  end
-
-  def medium_uri(host, url = nil)
-    url ||= host.medium.path
-    medium_vars_to_uri(url, host.architecture.name, host.operatingsystem)
-  end
-
-  def medium_vars_to_uri(url, arch, os)
-    URI.parse(interpolate_medium_vars(url, arch, os)).normalize
-  end
-
-  def interpolate_medium_vars(path, arch, os)
-    return "" if path.empty?
-
-    path.gsub('$arch', arch).
-         gsub('$major',  os.major).
-         gsub('$minor',  os.minor).
-         gsub('$version', os.minor.blank? ? os.major : [os.major, os.minor].compact.join('.')).
-         gsub('$release', os.release_name.blank? ? '' : os.release_name)
   end
 
   # The OS is usually represented as the concatenation of the OS and the revision
@@ -158,7 +155,7 @@ class Operatingsystem < ApplicationRecord
   end
 
   def release
-    "#{major}#{('.' + minor.to_s) unless minor.blank?}"
+    "#{major}#{('.' + minor.to_s) if minor.present?}"
   end
 
   def fullname
@@ -177,7 +174,7 @@ class Operatingsystem < ApplicationRecord
     cond = {:name => a[0]}
     cond[:major] = b[0] if b && b[0]
     cond[:minor] = b[1] if b && b[1]
-    self.where(cond).first
+    self.find_by(cond)
   end
 
   # Implemented only in the OSs subclasses where it makes sense
@@ -185,27 +182,54 @@ class Operatingsystem < ApplicationRecord
     ["None", "PXELinux BIOS"]
   end
 
-  # sets the prefix for the tfp files based on the os / arch combination
-  def pxe_prefix(arch)
-    "boot/#{self}-#{arch}".tr(" ","-")
+  # The DHCP record type to use, can be overriden by OSs subclasses
+  def dhcp_record_type
+    Net::DHCP::Record
   end
 
-  def pxe_files(medium, arch, host = nil)
-    boot_files_uri(medium, arch, host).collect do |img|
-      { pxe_prefix(arch).to_sym => img.to_s}
+  # Compatibility method, don't want to break all templates that use it.
+  def medium_uri(host)
+    Foreman::Deprecation.deprecation_warning("1.22", "medium_uri is now accessible through @medium_provider.medium_uri in templates")
+    @medium_provider = Foreman::Plugin.medium_providers.find_provider(host)
+    @medium_provider.medium_uri
+  end
+
+  # sets the prefix for the tfp files based on medium unique identifier
+  def pxe_prefix(medium_provider)
+    unless medium_provider.is_a? MediumProviders::Provider
+      raise Foreman::Exception.new(N_('Please provide a medium provider. It can be found as @medium_provider in templates, or Foreman::Plugin.medium_providers.find_provider(host)'))
+    end
+    "boot/#{medium_provider.unique_id}"
+  end
+
+  def pxe_files(medium_provider, _arch = nil, host = nil)
+    # Try to maintain backwards compatibility, if medium_provider could be constructed - do it with a warning.
+    if host
+      Foreman::Deprecation.deprecation_warning("1.22", "Please provide a medium provider. It can be found as @medium_provider in templates, or Foreman::Plugin.medium_providers.find_provider(host)")
+      medium_provider = Foreman::Plugin.medium_providers.find_provider(host)
+    end
+
+    unless medium_provider.is_a? MediumProviders::Provider
+      raise Foreman::Exception.new(N_('Please provide a medium provider. It can be found as @medium_provider in templates, or Foreman::Plugin.medium_providers.find_provider(host)'))
+    end
+    boot_files_uri(medium_provider).collect do |img|
+      { pxe_prefix(medium_provider).to_sym => img.to_s}
     end
   end
 
-  def kernel(arch)
-    bootfile(arch,:kernel)
+  def kernel(medium_provider)
+    bootfile(medium_provider, :kernel)
   end
 
-  def initrd(arch)
-    bootfile(arch,:initrd)
+  def initrd(medium_provider)
+    bootfile(medium_provider, :initrd)
   end
 
-  def bootfile(arch, type)
-    pxe_prefix(arch) + "-" + self.family.constantize::PXEFILES[type.to_sym]
+  def bootfile(medium_provider, type)
+    unless medium_provider.is_a? MediumProviders::Provider
+      raise Foreman::Exception.new(N_('Please provide a medium provider. It can be found as @medium_provider in templates, or Foreman::Plugin.medium_providers.find_provider(host)'))
+    end
+    pxe_prefix(medium_provider) + "-" + self.family.constantize::PXEFILES[type.to_sym]
   end
 
   # Does this OS family support a build variant that is constructed from a prebuilt archive
@@ -215,16 +239,26 @@ class Operatingsystem < ApplicationRecord
 
   # Compatible kinds for this OS sorted by preferrence
   def template_kinds
-    ["PXEGrub2", "PXELinux", "PXEGrub"]
+    ['PXELinux', 'PXEGrub2', 'PXEGrub', 'iPXE']
+  end
+
+  # iPXE templates should not get transfered to tftp
+  def template_kinds_for_tftp
+    template_kinds.select { |kind| kind != 'iPXE' }
   end
 
   def boot_filename(host = nil)
     return default_boot_filename if host.nil? || host.pxe_loader.nil?
-    self.class.all_loaders_map(host.arch.nil? ? '' : host.arch.bootfilename_efi)[host.pxe_loader]
+    return host.foreman_url('iPXE') if host.pxe_loader == 'iPXE Embedded'
+    architecture = host.arch.nil? ? '' : host.arch.bootfilename_efi
+    boot_uri = URI.parse((host.subnet&.httpboot?) ? host.subnet.httpboot.url : Setting[:unattended_url])
+    self.class.all_loaders_map(architecture, "#{boot_uri.host}:#{boot_uri.port}")[host.pxe_loader]
   end
 
   # Does this OS family use release_name in its naming scheme
   def use_release_name?
+    return false unless family
+    return self.becomes(family.constantize).use_release_name? unless self.class == family.constantize
     false
   end
 
@@ -233,7 +267,7 @@ class Operatingsystem < ApplicationRecord
   end
 
   # If this OS family requires access to its media via NFS
-  def require_nfs_access_to_medium
+  def self.require_nfs_access_to_medium
     false
   end
 
@@ -255,13 +289,24 @@ class Operatingsystem < ApplicationRecord
     end
   end
 
-  def boot_files_uri(medium, architecture, host = nil)
-    raise ::Foreman::Exception.new(N_("%{os} medium was not set for host '%{host}'"), :host => host, :os => self) if medium.nil?
-    raise ::Foreman::Exception.new(N_("Invalid medium '%{medium}' for '%{os}'"), :medium => medium, :os => self) unless media.include?(medium)
-    raise ::Foreman::Exception.new(N_("Invalid architecture '%{arch}' for '%{os}'"), :arch => architecture, :os => self) unless architectures.include?(architecture)
-    self.family.constantize::PXEFILES.values.map do |img|
-      medium_vars_to_uri("#{medium.path}/#{pxedir}/#{img}", architecture.name, self)
+  def boot_files_uri(medium_provider, &block)
+    boot_file_sources(medium_provider, &block).values
+  end
+
+  def url_for_boot(medium_provider, file, &block)
+    boot_file_sources(medium_provider, &block)[file]
+  end
+
+  def boot_file_sources(medium_provider, &block)
+    @boot_file_sources ||= self.family.constantize::PXEFILES.transform_values do |img|
+      "#{medium_provider.medium_uri(pxedir, &block)}/#{img}"
     end
+  end
+
+  def pxe_kernel_options(params)
+    options = []
+    options << params['kernelcmd'] if params['kernelcmd']
+    options
   end
 
   private
@@ -290,10 +335,5 @@ class Operatingsystem < ApplicationRecord
     provisioning_template_id_empty = attributes[:provisioning_template_id].blank?
     attributes[:_destroy] = 1 if template_exists && provisioning_template_id_empty
     (!template_exists && provisioning_template_id_empty)
-  end
-
-  # overriden by operating systems
-  def pxe_kernel_options(params)
-    []
   end
 end

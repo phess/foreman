@@ -2,7 +2,7 @@ module ComputeResourcesVmsHelper
   def vm_power_actions(host, vm)
     button_group(
       if vm
-        html_opts = vm.ready? ? {:confirm => _('Are you sure?'), :class => "btn btn-danger"} : {:class => "btn btn-success"}
+        html_opts = vm.ready? ? {:data => {:confirm => _('Are you sure?')}, :class => "btn btn-danger"} : {:class => "btn btn-success"}
         link_to_if_authorized _("Power%s") % state(vm.ready?), hash_for_power_host_path(:power_action => vm.ready? ? :stop : :start).merge(:auth_object => host, :permission => 'power_hosts'),
         html_opts.merge(:method => :put)
       else
@@ -12,11 +12,11 @@ module ComputeResourcesVmsHelper
   end
 
   def vm_console(host, vm)
-    if vm && vm.ready?
+    if vm&.ready?
       link_to_if_authorized(_("Console"), hash_for_console_host_path().merge(:auth_object => host, :permission => 'console_hosts'),
                             { :class => "btn btn-info" })
     else
-      link_to(_("Console"), '#', {:disabled=> true, :class => "btn btn-info"})
+      link_to(_("Console"), '#', {:disabled => true, :class => "btn btn-info"})
     end
   end
 
@@ -30,13 +30,13 @@ module ComputeResourcesVmsHelper
         value = @vm.send(method) rescue nil
         case value
         when Array
-          value.map{|v| v.try(:name) || v.try(:to_s) || v}.to_sentence
+          value.map {|v| v.try(:name) || v.try(:to_s) || v}.to_sentence
         when Fog::Time, Time
           _("%s ago") % time_ago_in_words(value)
         when nil
           _("N/A")
         else
-          method == :memory ? number_to_human_size(value) : value.to_s
+          (method == :memory) ? number_to_human_size(value) : value.to_s
         end
       end
       result
@@ -53,55 +53,34 @@ module ComputeResourcesVmsHelper
       :port     => console[:proxy_port],
       :password => console[:password]
     }
-    options.merge!(
-      :address     => console[:address],
-      :secure_port => console[:secure_port],
-      :subject     => console[:subject],
-      :title       => _("%s - Press Shift-F12 to release the cursor.") % console[:name]
-    ) if supports_spice_xpi?
+    if supports_spice_xpi?
+      options.merge!(
+        :address     => console[:address],
+        :secure_port => console[:secure_port],
+        :subject     => console[:subject],
+        :title       => _("%s - Press Shift-F12 to release the cursor.") % console[:name]
+      )
+    end
     options[:ca_cert] = URI.escape(console[:ca_cert]) if console[:ca_cert].present?
     options
   end
 
-  def libvirt_networks(compute)
-    networks   = compute.networks
+  def libvirt_networks(compute_resource)
+    networks   = compute_resource.networks
     select     = []
     select << [_('Physical (Bridge)'), :bridge]
     select << [_('Virtual (NAT)'), :network] if networks.any?
     select
   end
 
-  def vsphere_networks(compute_resource)
-    networks = compute_resource.networks
+  def vsphere_networks(compute_resource, cluster_id = nil)
+    networks = compute_resource.networks(cluster_id: cluster_id)
     networks.map do |net|
       net_id = net.id
       net_name = net.name
       net_name += " (#{net.virtualswitch})" if net.virtualswitch
       [net_id, net_name]
     end
-  end
-
-  def datastore_stats(datastore)
-    return datastore.name unless datastore.freespace && datastore.capacity
-    "#{datastore.name} (#{_('free')}: #{number_to_human_size(datastore.freespace)}, #{_('prov')}: #{number_to_human_size(datastore.capacity + (datastore.uncommitted || 0) - datastore.freespace)}, #{_('total')}: #{number_to_human_size(datastore.capacity)})"
-  end
-
-  def vsphere_datastores(compute)
-    compute.datastores.inject({}) do |hsh, datastore|
-      hsh[datastore.name] = datastore_stats(datastore)
-      hsh
-    end
-  end
-
-  def vsphere_storage_pods(compute)
-    compute.storage_pods.inject({}) do |hsh, pod|
-      hsh[pod.name] = storage_pod_stats(pod)
-      hsh
-    end
-  end
-
-  def storage_pod_stats(pod)
-    "#{pod.name} (#{_('free')}: #{number_to_human_size(pod.freespace.to_i)}, #{_('prov')}: #{number_to_human_size(pod.capacity.to_i - pod.freespace.to_i)}, #{_('total')}: #{number_to_human_size(pod.capacity.to_i)})"
   end
 
   def available_actions(vm, authorizer = nil)
@@ -159,7 +138,7 @@ module ComputeResourcesVmsHelper
 
   def subnet_vpc_hash(subnets)
     subnet_vpc_hash = {}
-    subnets.each{ |sub| subnet_vpc_hash[sub.subnet_id] = {:vpc_id =>sub.vpc_id, :subnet_name => sub.tag_set["Name"] || sub.subnet_id} }
+    subnets.each { |sub| subnet_vpc_hash[sub.subnet_id] = {:vpc_id => sub.vpc_id, :subnet_name => sub.tag_set["Name"] || sub.subnet_id} }
     subnet_vpc_hash
   end
 
@@ -177,7 +156,7 @@ module ComputeResourcesVmsHelper
   end
 
   def security_groups_for_vpc(security_groups, vpc_id)
-    security_groups.map{ |sg| [sg.name, sg.group_id] if sg.vpc_id == vpc_id }.compact
+    security_groups.map { |sg| [sg.name, sg.group_id] if sg.vpc_id == vpc_id }.compact
   end
 
   def security_group_not_selected(subnet_vpc_hash, vpc_sg_hash, vpc_id)
@@ -214,6 +193,10 @@ module ComputeResourcesVmsHelper
     params['start'].to_i + 1 + [@vms.length, params['length'].to_i].min
   end
 
+  def ovirt_storage_domains_for_select(compute_resource)
+    compute_resource.storage_domains.map { |sd| OpenStruct.new({ id: sd.id, label: "#{sd.name} (" + _("Available") + ": #{sd.available.to_i / 1.gigabyte} GiB, " + _("Used") + ": #{sd.used.to_i / 1.gigabyte} GiB)" }) }
+  end
+
   def ovirt_vms_data
     data = @vms.map do |vm|
       [
@@ -233,16 +216,17 @@ module ComputeResourcesVmsHelper
     display_delete_if_authorized(hash_for_compute_resource_vm_path(:compute_resource_id => @compute_resource, :id => vm.identity).merge(:auth_object => @compute_resource, :authorizer => authorizer), :class => 'btn btn-danger')
   end
 
-  def vsphere_scsi_controllers(compute)
+  def vsphere_scsi_controllers(compute_resource)
     scsi_controllers = {}
-    compute.scsi_controller_types.each { |type| scsi_controllers[type[:key]] = type[:title] }
+    compute_resource.scsi_controller_types.each { |type| scsi_controllers[type[:key]] = type[:title] }
     scsi_controllers
   end
 
   def new_vm?(host)
     return true unless host.present?
-    return true unless host.compute_object.present?
-    !host.compute_object.persisted?
+    compute_object = host.compute_object
+    return true unless compute_object.present?
+    !compute_object.persisted?
   end
 
   def vm_host_action(vm)
@@ -273,7 +257,7 @@ module ComputeResourcesVmsHelper
         :permission => 'edit_compute_resources'),
         :title => _("Associate VM to a Foreman host"),
         :method => :put,
-        :class =>"btn btn-default"
+        :class => "btn btn-default"
     )
   end
 
@@ -282,7 +266,8 @@ module ComputeResourcesVmsHelper
     link_to_if_authorized(
       _("Console"),
       hash_for_console_compute_resource_vm_path.merge(
-        :auth_object => @compute_resource
+        :auth_object => @compute_resource,
+        :id => vm.identity
       ),
       {
         :class => "btn btn-info"

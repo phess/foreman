@@ -1,6 +1,7 @@
 <%#
 kind: ptable
 name: Kickstart default
+model: Ptable
 oses:
 - CentOS
 - Fedora
@@ -8,5 +9,4 @@ oses:
 %>
 zerombr
 clearpart --all --initlabel
-autopart
-
+autopart <%= host_param('autopart_options') %>

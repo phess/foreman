@@ -10,41 +10,45 @@ module DashboardHelper
         _('Manage'), {},
         link_to_function(_('Save positions'), "save_position('#{save_positions_widgets_path}')"),
         link_to(_('Reset to default'), reset_default_widgets_path, :method => :put),
-        content_tag(:li, '', :class=>'divider'),
-        content_tag(:li, _("Add widgets"), :class=>'nav-header'),
-        content_tag(:li, '', :class=>'widget-add') do
+        content_tag(:li, '', :class => 'divider'),
+        content_tag(:li, _("Add widgets"), :class => 'nav-header'),
+        content_tag(:li, '', :class => 'widget-add') do
           widgets_to_add
         end
       ),
-      auto_refresh_button(:defaults_to => true),
+      auto_refresh_button(:defaults_to => false),
       documentation_button
     ]
   end
 
   def removed_widgets
-    Dashboard::Manager.default_widgets - User.current.widgets.map(&:to_hash)
+    user_widgets = User.current.widgets.pluck(:name)
+    Dashboard::Manager.default_widgets.reject do |widget|
+      user_widgets.include?(widget[:name])
+    end
   end
 
   def widgets_to_add
     return link_to(_('Nothing to add'), '#') unless removed_widgets.present?
-    removed_widgets.each do |removed_widget|
+    removed_widgets.sort_by {|w| w[:name] }.each do |removed_widget|
       concat(link_to_function(_(removed_widget[:name]),
                               "add_widget('#{removed_widget[:name]}')"))
     end
   end
 
   def widget_data(widget)
-    { :data => { :id    => widget.id,    :name  => _(widget.name), :row  => widget.row, :col => widget.col,
+    { :data => { :id    => widget.id,    :name  => _(widget.name), :row => widget.row, :col => widget.col,
                  :sizex => widget.sizex, :sizey =>  widget.sizey } }
   end
 
-  def count_reports(hosts)
+  def count_reports(hosts, options = {})
     data = []
-    interval = Setting[:puppet_interval] / 10
-    start = Time.zone.now - Setting[:puppet_interval].minutes
+    interval_setting = report_origin_interval_setting(options[:origin])
+    interval = interval_setting / 10
+    start = Time.zone.now - interval_setting.minutes
     (0..9).each do |i|
       t = start + (interval.minutes * i)
-      data << [Setting[:puppet_interval] - i*interval, hosts.run_distribution(t, t + interval.minutes).count]
+      data << [interval_setting - i * interval, hosts.run_distribution(t, t + interval.minutes).count]
     end
     data
   end
@@ -61,17 +65,17 @@ module DashboardHelper
     ].to_json
   end
 
-  def render_run_distribution(hosts, options = {})
-    data = count_reports(hosts)
-    flot_bar_chart("run_distribution", _("Minutes Ago"), _("Number Of Clients"), data, options)
+  def get_run_distribution_data(hosts, options = {})
+    data = count_reports(hosts, options).to_a
+    data.map { |label, value| [label.to_s, value] }
   end
 
   def searchable_links(name, search, counter)
-    search += " and #{@data.filter}" unless @data.filter.blank?
+    search += " and #{@data.filter}" if @data.filter.present?
     content_tag :li do
-      content_tag(:span, raw('&nbsp;'), :class=>'label', :style => "background-color:" + report_color[counter]) +
-      raw('&nbsp;')+
-      link_to(name, hosts_path(:search => search),:class=>"dashboard-links") +
+      content_tag(:span, raw('&nbsp;'), :class => 'label', :style => "background-color:" + report_color[counter]) +
+      raw('&nbsp;') +
+      link_to(name, hosts_path(:search => search), :class => "dashboard-links") +
       content_tag(:h4, @data.report[counter])
     end
   end
@@ -113,7 +117,7 @@ module DashboardHelper
   def auto_refresh_button(options = {})
     on = options[:defaults_to] ? "on" : "off"
     if params[:auto_refresh].present?
-      on = params[:auto_refresh] == "0" ? "off" : "on"
+      on = (params[:auto_refresh] == "0") ? "off" : "on"
     end
     if on == "on"
       tooltip = _("Auto refresh on")
@@ -121,7 +125,64 @@ module DashboardHelper
       tooltip = _("Auto refresh off")
     end
     link_to(icon_text("refresh"),
-            {:auto_refresh => (on == "on" ? "0" : "1")},
+            {:auto_refresh => ((on == "on") ? "0" : "1")},
             { :'data-original-title' => tooltip, :rel => 'twipsy', :class => "#{on} auto-refresh btn btn-group btn-default"})
+  end
+
+  def widget_class_name(widget)
+    settings = widget.data[:settings]
+    if settings && settings[:class_name]
+      settings[:class_name]
+    else
+      widget.name
+    end
+  end
+
+  def search_filter_with_origin(filter, origin, within_interval = false, ignore_interval = false)
+    interval_setting = report_origin_interval_setting(origin)
+    additional_filters = []
+    additional_filters << "origin = #{origin}" if origin
+    additional_filters << "last_report #{within_interval ? '<' : '>'} \"#{interval_setting} minutes ago\"" if out_of_sync_enabled?(origin) && !ignore_interval
+    (additional_filters + [filter]).join(' and ')
+  end
+
+  def report_origin_interval_setting(origin)
+    if origin && origin != 'All'
+      interval_setting = origin_setting(origin, 'interval')
+    end
+    interval_setting ||= Setting[:outofsync_interval]
+    interval_setting.to_i
+  end
+
+  def out_of_sync_enabled?(origin)
+    setting = origin_setting(origin, 'out_of_sync_disabled')
+    setting.nil? ? true : !setting
+  end
+
+  def host_build_status_icon(host)
+    if host.token_expired?
+      icon = 'hourglass-o'
+      icon_kind = 'fa'
+      icon_class = 'text-danger'
+      label = _('Token expired')
+    elsif host.build_errors.present?
+      icon = 'error-circle-o'
+      icon_kind = 'pficon'
+      icon_class = ''
+      label = _('Build errors')
+    else
+      icon = 'in-progress'
+      icon_kind = 'pficon'
+      icon_class = ''
+      label = _('Build in progress')
+    end
+    icon_text(icon, '', kind: icon_kind, title: label, class: icon_class)
+  end
+
+  private
+
+  def origin_setting(origin, name)
+    return nil unless origin
+    Setting[:"#{origin.downcase}_#{name}"]
   end
 end

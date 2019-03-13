@@ -2,14 +2,15 @@
 <%#
 kind: provision
 name: AutoYaST default
+model: ProvisioningTemplate
 oses:
 - OpenSUSE
 -%>
 <%
   # safemode renderer does not support unary negation
   pm_set = @host.puppetmaster.empty? ? false : true
-  puppet_enabled = pm_set || @host.param_true?('force-puppet')
-  salt_enabled = @host.params['salt_master'] ? true : false
+  puppet_enabled = pm_set || host_param_true?('force-puppet')
+  salt_enabled = host_param('salt_master') ? true : false
 
   primary_interface_identifier = @host.primary_interface.identifier.blank? ? 'eth0' : @host.primary_interface.identifier
   primary_interface_subnet = @host.primary_interface.subnet
@@ -90,7 +91,7 @@ oses:
     <configure_dhcp config:type="boolean">false</configure_dhcp>
     <peers config:type="list">
       <peer>
-        <address><%= @host.params['ntp-server'] || '0.opensuse.pool.ntp.org' %></address>
+        <address><%= host_param('ntp-server') || '0.opensuse.pool.ntp.org' %></address>
         <initial_sync config:type="boolean">true</initial_sync>
         <options></options>
         <type>server</type>
@@ -176,6 +177,8 @@ cp /etc/resolv.conf /mnt/etc
 
 <%= snippet('remote_execution_ssh_keys') %>
 
+<%= snippet "blacklist_kernel_modules" %>
+
 <% if puppet_enabled -%>
 <%= snippet 'puppet_setup' %>
 <% end -%>
@@ -184,7 +187,7 @@ cp /etc/resolv.conf /mnt/etc
 <%= snippet 'saltstack_setup' %>
 <% end -%>
 
-/usr/bin/curl -o /dev/null -k '<%= foreman_url('built') %>'
+<%= snippet 'built' %>
 
 rm /etc/resolv.conf
 ]]>
@@ -197,6 +200,6 @@ rm /etc/resolv.conf
   </keyboard>
   <timezone>
     <hwclock>UTC</hwclock>
-    <timezone><%= @host.params['time-zone'] || 'Etc/UTC' %></timezone>
+    <timezone><%= host_param('time-zone') || 'Etc/UTC' %></timezone>
   </timezone>
 </profile>

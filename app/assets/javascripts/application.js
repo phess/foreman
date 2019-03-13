@@ -1,13 +1,10 @@
 //= require jquery.turbolinks
 //= require turbolinks
-//= require i18n
 //= require jquery.ui.autocomplete
 //= require jquery.ui.spinner
 //= require scoped_search
 //= require bootstrap
 //= require patternfly
-//= require topbar
-//= require two-pane
 //= require vendor
 //= require jquery.extentions
 //= require jquery.multi-select
@@ -19,15 +16,21 @@
 //= require editable/bootstrap-editable
 //= require editable/rails
 
-$(document).on("page:fetch", tfm.tools.showSpinner)
+$(document).on("page:fetch", function() {
+  tfm.tools.showSpinner();
+});
 
 $(document).on("page:change", tfm.tools.hideSpinner)
 
 $(function() {
+  // turbolinks classic cached pages have an issue with react integration
+  // https://github.com/reactjs/react-rails/blob/18a4f5b4c44ab58ad0dd77c5e9315e3cb0edba1f/react_ujs/src/events/turbolinksClassicDeprecated.js#L4
+  Turbolinks.pagesCached(0);
   $(document).trigger('ContentLoad');
 });
 
 function onContentLoad(){
+  tfm.store.observeStore('layout', tfm.nav.showContent);
   uninitialized_autocompletes = $.grep($('.autocomplete-input'), function(i){ return !$(i).next().hasClass('autocomplete-clear'); });
   if (uninitialized_autocompletes.length > 0) {
     $.each(uninitialized_autocompletes, function(i, input) {$(input).scopedSearch({'delay': 250})});
@@ -87,8 +90,10 @@ function onContentLoad(){
 
   password_caps_lock_hint();
 
-  var tz = jstz.determine();
-  $.cookie('timezone', tz.name(), { path: '/', secure: location.protocol === 'https:' });
+  tfm.i18n.intl.ready.then(function() {
+    var tz = jstz.determine();
+    $.cookie('timezone', tz.name(), { path: '/', secure: location.protocol === 'https:' });
+  });
 
   $('.full-value').SelectOnClick();
   activate_select2(':root');
@@ -206,25 +211,6 @@ function template_info(div, url) {
   });
 }
 
-//add bookmark dialog
-$(function() {
-  $('#bookmarks-modal .modal-footer .btn-primary').on('click', function(){
-     $('#bookmarks-modal .modal-body .btn-primary').click();
-  });
-  $("#bookmarks-modal").bind('shown.bs.modal', function () {
-    var query = encodeURI($("#search").val());
-    var url = $("#bookmark").attr('data-url');
-    $("#bookmarks-modal .modal-body").empty();
-    $("#bookmarks-modal .modal-body").append("<span id='loading'>" + __('Loading ...') + "</span>");
-    $("#bookmarks-modal .modal-body").load(url + '&query=' + query + ' form',
-                                           function(response, status, xhr) {
-                                             $("#loading").hide();
-                                             $("#bookmarks-modal .modal-body .btn").hide()
-                                           });
-  });
-
-});
-
 function filter_by_level(item){
   var level = $(item).val();
 
@@ -258,16 +244,6 @@ function filter_by_level(item){
     $('#ntsh').hide();
   }
 }
-
-function auth_source_selected(){
-  var auth_source_id = $('#user_auth_source_id').val();
-  if (auth_source_id == '') {
-     $("#password").hide();
-  } else {
-     $("#password").show();
-  }
-}
-
 function show_release(element){
   var os_family = $(element).val();
   if ($.inArray(os_family, ['Debian', 'Solaris', 'Coreos']) != -1) {
@@ -354,11 +330,6 @@ function spinner_placeholder(text){
   return "<div class='spinner-placeholder'><p class='spinner-label'>" + text + "</p><div id='Loading' class='spinner spinner-md spinner-inline'> </div></div>";
 }
 
-function notify(message, type) {
-  tfm.tools.deprecate('notify', 'tfm.toastNotifications.notify');
-  tfm.toastNotifications.notify({message: message, type: type});
-}
-
 function typeToIcon(type) {
   switch(type)
   {
@@ -414,22 +385,24 @@ function toggle_input_group(item) {
 }
 
 function reloadOnAjaxComplete(element) {
-  tfm.tools.hideSpinner()
+  tfm.tools.hideSpinner();
   tfm.tools.activateTooltips();
   activate_select2(':root');
+  tfm.numFields.initAll();
+  tfm.advancedFields.initAdvancedFields();
+  tfm.templateInputs.initTypeChanges()
 }
 
 function set_fullscreen(element){
   var exit_button = $('<div class="exit-fullscreen"><a class="btn btn-default btn-lg" href="#" onclick="exit_fullscreen(); return false;" title="'+
-    __('Exit Full Screen')+'">' + tfm.tools.iconText('expand','','fa') + '</a></div>');
+    __('Exit Full Screen')+'">' + tfm.tools.iconText('compress','','fa') + '</a></div>');
   element.before("<span id='fullscreen-placeholder'></span>")
          .data('position', $(window).scrollTop())
          .addClass('fullscreen')
-         .appendTo($('body'))
+         .appendTo($('.container-pf-nav-pf-vertical'))
          .resize()
          .after(exit_button);
   $('#content').addClass('hidden');
-  $('.navbar').addClass('hidden');
   $(document).on('keyup', function(e) {
     if (e.keyCode == 27) {    // esc
       exit_fullscreen();
@@ -440,7 +413,6 @@ function set_fullscreen(element){
 function exit_fullscreen(){
   var element = $('.fullscreen');
   $('#content').removeClass('hidden');
-  $('.navbar').removeClass('hidden');
   element.removeClass('fullscreen')
          .insertAfter('#fullscreen-placeholder')
          .resize();

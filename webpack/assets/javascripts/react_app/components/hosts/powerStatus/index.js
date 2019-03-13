@@ -1,15 +1,18 @@
-import React from 'react';
 import { connect } from 'react-redux';
+import React from 'react';
+import PropTypes from 'prop-types';
+
+import { noop } from '../../../common/helpers';
 import * as HostsActions from '../../../redux/actions/hosts/powerStatus/';
+
 import PowerStatusInner from './powerStatusInner';
 
 class PowerStatus extends React.Component {
-  constructor(props) {
-    super(props);
-  }
-
   componentDidMount() {
-    const { data: { id, url }, getHostPowerState } = this.props;
+    const {
+      data: { id, url },
+      getHostPowerState,
+    } = this.props;
 
     getHostPowerState({ id, url });
   }
@@ -19,10 +22,25 @@ class PowerStatus extends React.Component {
   }
 }
 
-const mapStateToProps = (state, ownProps) => {
-  return {
-    power: state.hosts.powerStatus[ownProps.data.id] || {}
-  };
+PowerStatus.propTypes = {
+  data: PropTypes.shape({
+    id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    url: PropTypes.string,
+  }).isRequired,
+  power: PropTypes.object,
+  getHostPowerState: PropTypes.func,
 };
 
-export default connect(mapStateToProps, HostsActions)(PowerStatus);
+PowerStatus.defaultProps = {
+  power: {},
+  getHostPowerState: noop,
+};
+
+const mapStateToProps = (state, ownProps) => ({
+  power: state.hosts.powerStatus[ownProps.data.id] || {},
+});
+
+export default connect(
+  mapStateToProps,
+  HostsActions
+)(PowerStatus);

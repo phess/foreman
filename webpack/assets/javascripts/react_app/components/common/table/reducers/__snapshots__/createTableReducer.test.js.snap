@@ -1,0 +1,46 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Table createTableReducer should handle FAILURE 1`] = `
+Object {
+  "error": [Error: ooops!],
+  "results": Array [],
+  "sortBy": "",
+  "sortOrder": "",
+  "status": "ERROR",
+}
+`;
+
+exports[`Table createTableReducer should handle REQUEST 1`] = `
+Object {
+  "error": null,
+  "results": Array [],
+  "sortBy": "",
+  "sortOrder": "",
+  "status": "PENDING",
+}
+`;
+
+exports[`Table createTableReducer should handle SUCCESS 1`] = `
+Object {
+  "error": null,
+  "results": Array [
+    Object {
+      "id": 23,
+      "name": "model",
+    },
+  ],
+  "sortBy": "name",
+  "sortOrder": "ASC",
+  "status": "RESOLVED",
+}
+`;
+
+exports[`Table createTableReducer should return initial state 1`] = `
+Object {
+  "error": null,
+  "results": Array [],
+  "sortBy": "",
+  "sortOrder": "",
+  "status": "PENDING",
+}
+`;

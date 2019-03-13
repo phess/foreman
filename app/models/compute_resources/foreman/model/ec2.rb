@@ -1,5 +1,7 @@
 module Foreman::Model
   class EC2 < ComputeResource
+    GOV_CLOUD_REGION = 'us-gov-west-1'
+
     include KeyPairComputeResource
     delegate :flavors, :subnets, :to => :client
     delegate :security_groups, :flavors, :zones, :to => :self, :prefix => 'available'
@@ -11,6 +13,19 @@ module Foreman::Model
     def to_label
       "#{name} (#{region}-#{provider_friendly_name})"
     end
+
+    def gov_cloud=(enable_gov_cloud)
+      if enable_gov_cloud == '1'
+        self.url = GOV_CLOUD_REGION
+      elsif gov_cloud?
+        self.url = nil
+      end
+    end
+
+    def gov_cloud
+      self.url == GOV_CLOUD_REGION
+    end
+    alias_method :gov_cloud?, :gov_cloud
 
     def provided_attributes
       super.merge({ :ip => :vm_ip_address })
@@ -35,7 +50,7 @@ module Foreman::Model
     end
 
     def create_vm(args = { })
-      args = vm_instance_defaults.merge(args.to_hash.symbolize_keys).deep_symbolize_keys
+      args = vm_instance_defaults.merge(args.to_h.symbolize_keys).deep_symbolize_keys
       if (name = args[:name])
         args[:tags] = {:Name => name}
       end
@@ -74,16 +89,18 @@ module Foreman::Model
       errors[:user].empty? && errors[:password].empty? && regions
     rescue Fog::Compute::AWS::Error => e
       errors[:base] << e.message
+    rescue Excon::Error::Socket => e
+      errors[:base] << e.message
     end
 
     def console(uuid)
       vm = find_vm_by_uuid(uuid)
-      vm.console_output.body.merge(:type=>'log', :name=>vm.name)
+      vm.console_output.body.merge(:type => 'log', :name => vm.name)
     end
 
     def destroy_vm(uuid)
       vm = find_vm_by_uuid(uuid)
-      vm.destroy if vm
+      vm&.destroy
       true
     end
 
@@ -104,14 +121,36 @@ module Foreman::Model
       client.images.get(image).present?
     end
 
+    def normalize_vm_attrs(vm_attrs)
+      normalized = slice_vm_attributes(vm_attrs, ['flavor_id', 'availability_zone', 'subnet_id', 'image_id', 'managed_ip'])
+
+      normalized['flavor_name'] =  self.flavors.detect { |f| f.id == normalized['flavor_id'] }.try(:name)
+      normalized['subnet_name'] =  self.subnets.detect { |f| f.subnet_id == normalized['subnet_id'] }.try(:cidr_block)
+      normalized['image_name'] = self.images.find_by(:uuid => vm_attrs['image_id']).try(:name)
+
+      group_ids = vm_attrs['security_group_ids'] || []
+      group_ids = group_ids.select { |gid| gid != '' }
+      normalized['security_groups'] = group_ids.map.with_index do |gid, idx|
+        [idx.to_s, {
+          'id' => gid,
+          'name' => self.security_groups.detect { |g| g.group_id == gid }.try(:name)
+        }]
+      end.to_h
+
+      normalized
+    rescue Fog::Compute::AWS::Error => e
+      Foreman::Logging.exception("Unhandled EC2 error", e)
+      {}
+    end
+
     private
 
-    def subnet_implies_is_vpc? args
+    def subnet_implies_is_vpc?(args)
       args[:subnet_id].present?
     end
 
     def client
-      @client ||= ::Fog::Compute.new(:provider => "AWS", :aws_access_key_id => user, :aws_secret_access_key => password, :region => region)
+      @client ||= ::Fog::Compute.new(:provider => "AWS", :aws_access_key_id => user, :aws_secret_access_key => password, :region => region, :connection_options => connection_options)
     end
 
     def vm_instance_defaults

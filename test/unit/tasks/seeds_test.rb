@@ -1,23 +1,27 @@
 require 'test_helper'
+require 'seed_helper'
 require 'database_cleaner'
 
 class SeedsTest < ActiveSupport::TestCase
-  # Disable AR transactional fixtures as we use DatabaseCleaner's truncation
+  # Disable AR transactional tests as we use DatabaseCleaner's truncation
   # to empty the DB of fixtures for testing the seed script
-  self.use_transactional_fixtures = false
+  self.use_transactional_tests = false
 
   setup do
     DatabaseCleaner.clean_with :truncation
-    Setting.stubs(:[]).with(:administrator).returns("root@localhost")
-    Setting.stubs(:[]).with(:send_welcome_email).returns(false)
-    Setting.stubs(:[]).with(:authorize_login_delegation_auth_source_user_autocreate).returns('EXTERNAL')
+    # Since we truncate the db, settings getter/setter won't work properly
+    Setting.stubs(:[])
+    Setting.stubs(:[]=)
     Foreman.stubs(:in_rake?).returns(true)
   end
 
-  def seed
+  def seed(*seed_files)
     # Authorisation is disabled usually when run from a rake db:* task
     as_admin do
-      load File.expand_path('../../../../db/seeds.rb', __FILE__)
+      seed_files = ['../seeds.rb'] if seed_files.empty?
+      seed_files.each do |file|
+        load File.expand_path("../../../db/seeds.d/#{file}", __dir__)
+      end
     end
   end
 
@@ -25,15 +29,40 @@ class SeedsTest < ActiveSupport::TestCase
     User.current = nil
   end
 
-  test 'populates features' do
-    count = Feature.count
+  test 'populates multiple tables' do
+    Setting.stubs(:[]).with(:authorize_login_delegation_auth_source_user_autocreate).returns('EXTERNAL')
+    tables = [Feature, Ptable, ProvisioningTemplate, Medium, Bookmark, AuthSourceExternal]
+
+    tables.each do |model|
+      assert model.unscoped.count.zero?
+    end
+
     seed
-    assert_not_equal count, Feature.count
+
+    tables.each do |model|
+      refute model.unscoped.count.zero?
+    end
+
+    refute Ptable.unscoped.where(:os_family => nil).any?
+    refute Medium.unscoped.where(:os_family => nil).any?
+    Dir["#{Rails.root}/app/views/unattended/**/*.erb"].each do |tmpl|
+      template = File.read(tmpl)
+      requirements = Template.parse_metadata(template)['require'] || []
+      # skip templates that require plugins that aren't available
+      next unless SeedHelper.send(:test_template_requirements, tmpl, requirements)
+      if tmpl =~ /partition_tables_templates/
+        assert Ptable.unscoped.where(:template => template).any?, "No partition table containing #{tmpl}"
+      elsif tmpl =~ /report_templates/
+        assert ReportTemplate.unscoped.where(:template => template).any?, "No report template containing #{tmpl}"
+      else
+        assert ProvisioningTemplate.unscoped.where(:template => template).any?, "No template containing #{tmpl}"
+      end
+    end
   end
 
   test 'populates hidden admin users' do
     assert_difference 'User.unscoped.where(:login => [User::ANONYMOUS_ADMIN, User::ANONYMOUS_API_ADMIN]).count', 2 do
-      seed
+      seed('030-auth_sources.rb', '035-admin.rb')
     end
     [User::ANONYMOUS_ADMIN, User::ANONYMOUS_API_ADMIN, User::ANONYMOUS_CONSOLE_ADMIN].each do |login|
       user = User.unscoped.find_by_login(login)
@@ -49,7 +78,7 @@ class SeedsTest < ActiveSupport::TestCase
   context 'populating an initial admin user' do
     test 'with defaults' do
       assert_difference 'User.unscoped.where(:login => "admin").count', 1 do
-        seed
+        seed('030-auth_sources.rb', '035-admin.rb')
       end
       user = User.unscoped.find_by_login('admin')
       assert user.password_hash.present?
@@ -76,46 +105,6 @@ class SeedsTest < ActiveSupport::TestCase
     end
   end
 
-  test 'populates partition tables' do
-    count = Ptable.unscoped.count
-    seed
-    assert_not_equal count, Ptable.unscoped.count
-    refute Ptable.unscoped.where(:os_family => nil).any?
-  end
-
-  test 'populates installation media' do
-    count = Medium.unscoped.count
-    seed
-    assert_not_equal count, Medium.unscoped.count
-    refute Medium.unscoped.where(:os_family => nil).any?
-  end
-
-  test 'populates config templates' do
-    count = ProvisioningTemplate.unscoped.count
-    seed
-    assert_not_equal count, ProvisioningTemplate.unscoped.count
-
-    Dir["#{Rails.root}/app/views/unattended/**/*.erb"].each do |tmpl|
-      if tmpl =~ /partition_tables_templates/
-        assert Ptable.unscoped.where(:template => File.read(tmpl)).any?, "No partition table containing #{tmpl}"
-      else
-        assert ProvisioningTemplate.unscoped.where(:template => File.read(tmpl)).any?, "No template containing #{tmpl}"
-      end
-    end
-  end
-
-  test 'populates bookmarks' do
-    count = Bookmark.unscoped.where(:public => true).count
-    seed
-    assert_not_equal count, Bookmark.unscoped.where(:public => true).count
-  end
-
-  test 'populates external auth source if the authorize_login_delegation_auth_source_user_autocreate setting is set' do
-    assert_difference 'AuthSourceExternal.count', 1 do
-      seed
-    end
-  end
-
   test 'is idempotent' do
     seed
     ActiveRecord::Base.any_instance.expects(:save).never
@@ -123,26 +112,31 @@ class SeedsTest < ActiveSupport::TestCase
   end
 
   test "does update template that was not modified by user" do
-    seed
-    ProvisioningTemplate.without_auditing { ProvisioningTemplate.unscoped.find_by_name('Kickstart default').update_attributes(:template => 'test') }
-    seed
+    seed('070-provisioning_templates.rb')
+    ProvisioningTemplate.without_auditing { ProvisioningTemplate.unscoped.find_by_name('Kickstart default').update(:template => 'test') }
+    seed('070-provisioning_templates.rb')
     refute_equal ProvisioningTemplate.unscoped.find_by_name('Kickstart default').template, 'test'
   end
 
   test "doesn't add a template back that was deleted" do
-    seed
-    assert_equal 1, ProvisioningTemplate.unscoped.
-      where(:name => 'Kickstart default').destroy_all.size
-    seed
+    seed('070-provisioning_templates.rb')
+    with_auditing(ProvisioningTemplate) do
+      assert_equal 1, ProvisioningTemplate.unscoped.where(:name => 'Kickstart default').destroy_all.size
+    end
+    assert SeedHelper.audit_modified?(ProvisioningTemplate, 'Kickstart default')
+    seed('070-provisioning_templates.rb')
     refute ProvisioningTemplate.unscoped.find_by_name('Kickstart default')
   end
 
   test "doesn't add a template back that was renamed" do
-    seed
-    tmpl = ProvisioningTemplate.unscoped.find_by_name('Kickstart default')
-    tmpl.name = 'test'
-    tmpl.save!
-    seed
+    seed('070-provisioning_templates.rb')
+    with_auditing(ProvisioningTemplate) do
+      tmpl = ProvisioningTemplate.unscoped.find_by_name('Kickstart default')
+      tmpl.name = 'test'
+      tmpl.save!
+    end
+    assert SeedHelper.audit_modified?(ProvisioningTemplate, 'Kickstart default')
+    seed('070-provisioning_templates.rb')
     refute ProvisioningTemplate.unscoped.find_by_name('Kickstart default')
   end
 
@@ -152,50 +146,74 @@ class SeedsTest < ActiveSupport::TestCase
   end
 
   test "seed organization when environment SEED_ORGANIZATION specified" do
-    Organization.stubs(:any?).returns(false)
+    Organization.stubs(:none?).returns(true)
     with_env('SEED_ORGANIZATION' => 'seed_test') do
-      seed
+      seed('030-auth_sources.rb', '035-admin.rb', '050-taxonomies.rb')
     end
     assert Organization.unscoped.find_by_name('seed_test')
   end
 
   test "don't seed organization when an org already exists" do
-    Organization.stubs(:any?).returns(true)
+    Organization.stubs(:none?).returns(false)
     with_env('SEED_ORGANIZATION' => 'seed_test') do
-      seed
+      seed('030-auth_sources.rb', '035-admin.rb', '050-taxonomies.rb')
     end
     refute Organization.unscoped.find_by_name('seed_test')
   end
 
   test "seed location when environment SEED_LOCATION specified" do
-    Location.stubs(:any?).returns(false)
+    Location.stubs(:none?).returns(true)
     with_env('SEED_LOCATION' => 'seed_test') do
-      seed
+      seed('030-auth_sources.rb', '035-admin.rb', '050-taxonomies.rb')
     end
     assert Location.unscoped.find_by_name('seed_test')
   end
 
   test "don't seed location when a location already exists" do
-    Location.stubs(:any?).returns(true)
+    Location.stubs(:none?).returns(false)
     with_env('SEED_LOCATION' => 'seed_test') do
-      seed
+      seed('030-auth_sources.rb', '035-admin.rb', '050-taxonomies.rb')
     end
     refute Location.unscoped.find_by_name('seed_test')
   end
 
+  test "seeded organization contains seeded location" do
+    Location.stubs(:none?).returns(true)
+    Organization.stubs(:none?).returns(true)
+
+    org_name = 'seed_org'
+    loc_name = 'seed_loc'
+
+    with_env('SEED_ORGANIZATION' => org_name, 'SEED_LOCATION' => loc_name) do
+      seed('030-auth_sources.rb', '035-admin.rb', '050-taxonomies.rb')
+    end
+
+    org = Organization.unscoped.find_by_name(org_name)
+    loc = Location.unscoped.find_by_name(loc_name)
+
+    assert org.locations.include?(loc)
+  end
+
   test "all access permissions are created by permissions seed" do
-    seed
+    seed('020-permissions_list.rb', '030-permissions.rb')
     access_permissions = Foreman::AccessControl.permissions.reject(&:public?).reject(&:plugin?).map(&:name).map(&:to_s)
     seeded_permissions = Permission.pluck('permissions.name')
     # Check all access control have a matching seeded permission
     assert_equal [], access_permissions - seeded_permissions
     # Check all seeded permissions have a matching access control
-    assert_equal [], seeded_permissions - access_permissions
+    # except for 'escalate_roles' as it is not tied to a controller action
+    assert_equal [], seeded_permissions - access_permissions - ['escalate_roles']
   end
 
-  test "viewer role contains all view permissions" do
-    seed
-    view_permissions = Permission.all.select { |permission| permission.name.match(/view/) }
+  test "viewer role contains all view permissions except for settings" do
+    seed('020-permissions_list.rb', '030-permissions.rb', '020-roles_list.rb', '040-roles.rb')
+    view_permissions = Permission.all.select { |permission| permission.name.match(/view/) && permission.name != 'view_settings' }
     assert_equal [], view_permissions - Role.unscoped.find_by_name('Viewer').permissions
+  end
+
+  test "adds description to template kind" do
+    seed('070-provisioning_templates.rb')
+    tmpl_kind = TemplateKind.unscoped.find_by_name('iPXE')
+    assert_equal "Used in iPXE environments.", tmpl_kind.description
   end
 end

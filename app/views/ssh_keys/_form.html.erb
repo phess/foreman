@@ -2,17 +2,9 @@
   <%= base_errors_for @ssh_key %>
   <% if @ssh_key.errors.include?(:fingerprint) || @ssh_key.errors.include?(:length) %>
     <p><%= _('Please correct the error(s) below and submit your changes again.') %></p>
-
-    <div class="alert alert-warning alert-block base">
-      <% [:fingerprint, :length].each do |field|%>
-        <% @ssh_key.errors.full_messages_for(field).each do |e| %>
-          <li><%= e %></li>
-        <% end %>
-      <% end %>
-    </div>
+    <%= alert :close => false, :class => "alert-warning alert-block base", :text => [:fingerprint, :length].map { |field| @ssh_key.errors.full_messages_for(field).map { |e| '<li>'.html_safe + e + '</li>'.html_safe }.join }.join.html_safe  %>
   <% end %>
-  <%= textarea_f f, :key, :size => 'col-md-8', :rows=> '3', :autofocus => true %>
+  <%= textarea_f f, :key, :size => 'col-md-8', :rows=> '3', :autofocus => true, :onfocusout => "tfm.sshKeys.autofillSshKeyName()" %>
   <%= text_f f, :name, :focus_on_load => false %>
   <%= submit_or_cancel f, false, :cancel_path => edit_user_path(@user) %>
-  <%= javascript_tag("$('#ssh_key_key').on('focusout', tfm.sshKeys.autofillSshKeyName);"); %>
 <% end %>

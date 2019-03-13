@@ -1,4 +1,5 @@
 class Model < ApplicationRecord
+  audited
   include Authorizable
   extend FriendlyId
   friendly_id :name

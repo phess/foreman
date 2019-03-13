@@ -1,5 +1,5 @@
 class Usergroup < ApplicationRecord
-  audited
+  audited :associations => [:usergroups, :roles, :users]
   include Authorizable
   extend FriendlyId
   friendly_id :name
@@ -8,6 +8,7 @@ class Usergroup < ApplicationRecord
   include UserUsergroupCommon
 
   validates_lengths_from_database
+  validates_associated :external_usergroups
   before_destroy EnsureNotUsedBy.new(:hosts), :ensure_last_admin_group_is_not_deleted
 
   has_many :user_roles, :dependent => :destroy, :as => :owner
@@ -21,7 +22,7 @@ class Usergroup < ApplicationRecord
   has_many :cached_usergroups, :through => :cached_usergroup_members, :source => :usergroup
   has_many :cached_usergroup_members, :foreign_key => 'usergroup_id'
   has_many :usergroup_parents, -> { where("member_type = 'Usergroup'") }, :dependent => :destroy,
-    :foreign_key => 'member_id', :class_name => 'UsergroupMember'
+           :foreign_key => 'member_id', :class_name => 'UsergroupMember'
   has_many :parents,    :through => :usergroup_parents, :source => :usergroup, :dependent => :destroy
 
   has_many_hosts :as => :owner
@@ -71,14 +72,6 @@ class Usergroup < ApplicationRecord
     users.each { |u| u.expire_topbar_cache }
   end
 
-  def add_users(userlist)
-    users << User.where(:lower_login => userlist.map(&:downcase))
-  end
-
-  def remove_users(userlist)
-    self.users = self.users - User.where(:lower_login => userlist.map(&:downcase))
-  end
-
   def to_export
     all_users.map(&:to_export).reduce({}, :merge)
   end
@@ -98,7 +91,7 @@ class Usergroup < ApplicationRecord
   # [+users+]     : Array of users accumulated at this point
   # Returns       : Array of non unique users
   def retrieve_users_and_groups(group_list, user_list)
-    for group in usergroups
+    usergroups.each do |group|
       next if group_list.include? group
       group_list << group
 
@@ -108,7 +101,7 @@ class Usergroup < ApplicationRecord
   end
 
   def ensure_uniq_name
-    errors.add :name, _("is already used by a user account") if User.where(:login => name).first
+    errors.add :name, _("is already used by a user account") if User.find_by(:login => name)
   end
 
   def ensure_last_admin_remains_admin
@@ -123,7 +116,7 @@ class Usergroup < ApplicationRecord
     if admin? && other_admins.empty?
       errors.add :base, _("Can't delete the last admin user group")
       logger.warn "Unable to delete the last admin user group"
-      false
+      throw :abort
     end
   end
 

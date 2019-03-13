@@ -50,7 +50,7 @@ module FormHelper
   def multiple_checkboxes(f, attr, klass, associations, options = {}, html_options = {})
     association_name = attr || ActiveModel::Naming.plural(associations)
     associated_obj = klass.send(association_name)
-    selected_ids = associated_obj.select("#{associations.table_name}.id").map(&:id)
+    selected_ids = options.delete(:selected_ids) || associated_obj.map(&:id)
     multiple_selects(f, attr, associations, selected_ids, options, html_options)
   end
 
@@ -75,14 +75,15 @@ module FormHelper
 
     unauthorized = selected_ids.blank? ? [] : selected_ids - authorized.map(&:id)
     field(f, attr, options) do
-      attr_ids = (attr.to_s.singularize+"_ids").to_sym
+      attr_ids = attr.to_s
+      attr_ids = (attr_ids.singularize + '_ids').to_sym unless attr_ids.end_with?('_ids')
       hidden_fields = ''
       html_options["data-useds"] ||= "[]"
       JSON.parse(html_options["data-useds"]).each do |disabled_value|
-        hidden_fields += f.hidden_field(attr_ids, :multiple => true, :value => disabled_value, :id=>'')
+        hidden_fields += f.hidden_field(attr_ids, :multiple => true, :value => disabled_value, :id => '')
       end
       unauthorized.each do |unauthorized_value|
-        hidden_fields += f.hidden_field(attr_ids, :multiple => true, :value => unauthorized_value, :id=>'')
+        hidden_fields += f.hidden_field(attr_ids, :multiple => true, :value => unauthorized_value, :id => '')
       end
       hidden_fields + f.collection_select(attr_ids, authorized.sort_by { |a| a.to_s },
                                           :id, options.delete(:object_label_method) || :to_label, options.merge(:selected => selected_ids),
@@ -92,13 +93,13 @@ module FormHelper
 
   def line_count(f, attr)
     rows = f.object.try(attr).to_s.lines.count rescue 1
-    rows == 0 ? 1 : rows
+    (rows == 0) ? 1 : rows
   end
 
   def radio_button_f(f, attr, options = {})
     text = options.delete(:text)
     value = options.delete(:value)
-    label_tag('', :class=>"radio-inline") do
+    label_tag('', :class => "radio-inline") do
       f.radio_button(attr, value, options) + " #{text} "
     end
   end
@@ -116,7 +117,7 @@ module FormHelper
       # if the method is to_s, OpenStruct will respond with its own version.
       # in this case, I need to undefine its own alias to to_s, and use the attribute
       # that was defined in the struct.
-      blank_option.instance_eval('undef to_s') if method.to_s == 'to_s' || id.to_s == 'to_s'
+      blank_option.instance_eval('undef to_s', __FILE__, __LINE__) if method.to_s == 'to_s' || id.to_s == 'to_s'
       array.insert(0, blank_option)
     end
 
@@ -131,13 +132,13 @@ module FormHelper
 
       if disable_button
         button_part =
-            content_tag :span, class: 'input-group-btn' do
-              content_tag(:button, disable_button, :type => 'button', :href => '#',
-                          :name => 'is_overridden_btn',
-                          :onclick => "disableButtonToggle(this)",
-                          :class => 'btn btn-default btn-can-disable' + (disable_button_enabled ? ' active' : ''),
-                          :data => { :toggle => 'button', :explicit => user_set })
-            end
+          content_tag :span, class: 'input-group-btn' do
+            content_tag(:button, disable_button, :type => 'button', :href => '#',
+                        :name => 'is_overridden_btn',
+                        :onclick => "disableButtonToggle(this)",
+                        :class => 'btn btn-default btn-can-disable' + (disable_button_enabled ? ' active' : ''),
+                        :data => { :toggle => 'button', :explicit => user_set })
+          end
 
         input_group collection_select, button_part
       else
@@ -172,9 +173,13 @@ module FormHelper
   def selectable_f(f, attr, array, select_options = {}, html_options = {})
     html_options[:size] = 'col-md-10' if html_options[:multiple]
     field(f, attr, html_options) do
-      addClass html_options, "form-control"
-      f.select attr, array, select_options, html_options
+      form_select_f(f, attr, array, select_options, html_options)
     end
+  end
+
+  def selectable_f_inline(f, attr, array, select_options = {}, html_options = {})
+    html_options[:size] = 'col-md-10' if html_options[:multiple]
+    form_select_f(f, attr, array, select_options, html_options)
   end
 
   def spinner_button_f(f, caption, action, html_options = {})
@@ -186,8 +191,13 @@ module FormHelper
   end
 
   def file_field_f(f, attr, options = {})
+    if options[:file_name]
+      html =  content_tag(:b) {options.delete(:file_name)}
+      html += content_tag(:hr)
+      html += content_tag(:div, :style => "margin-bottom: 10px") {_("Choose a new file:")}
+    end
     field(f, attr, options) do
-      f.file_field attr, options
+      (html || " ") + (f.file_field attr, options)
     end
   end
 
@@ -197,9 +207,9 @@ module FormHelper
       auto_complete_search(attr,
                            f.object.send(attr).try(:squeeze, " "),
                            options.merge(
-                               :placeholder => _("Filter") + ' ...',
-                               :path        => path,
-                               :name        => "#{f.object_name}[#{attr}]"
+                             :placeholder => _("Filter") + ' ...',
+                             :path        => path,
+                             :name        => "#{f.object_name}[#{attr}]"
                            )
       ).html_safe
     end
@@ -253,9 +263,9 @@ module FormHelper
       content_tag(:div, :class => "form-actions") do
         text    = overwrite ? _("Overwrite") : _("Submit")
         options = options_for_submit_or_cancel(f, overwrite, args)
-        link_to(_("Cancel"), args[:cancel_path], :class => "btn btn-default") + " " + f.submit(text, options)
+        f.submit(text, options) + " " + link_to(_("Cancel"), args[:cancel_path], :class => "btn btn-default")
       end
-    end + ie_multipart_fix
+    end
   end
 
   def options_for_submit_or_cancel(f, overwrite, args)
@@ -263,6 +273,7 @@ module FormHelper
     options[:disabled] = true if args[:disabled]
     options[:class] = "btn btn-#{overwrite ? 'danger' : 'primary'} remove_form_templates"
     options[:'data-id'] = form_to_submit_id(f) unless options.has_key?(:'data-id')
+    options[:data] = args[:data] if args.key?(:data)
     options
   end
 
@@ -283,9 +294,9 @@ module FormHelper
 
   def form_for(record_or_name_or_array, *args, &proc)
     if args.last.is_a?(Hash)
-      args.last[:html] = {:class=>"form-horizontal well"}.merge(args.last[:html]||{})
+      args.last[:html] = {:class => "form-horizontal well"}.merge(args.last[:html] || {})
     else
-      args << {:html=>{:class=>"form-horizontal well"}}
+      args << {:html => {:class => "form-horizontal well"}}
     end
     super record_or_name_or_array, *args, &proc
   end
@@ -310,14 +321,14 @@ module FormHelper
     end
   end
 
-  def add_label options, f, attr
+  def add_label(options, f, attr)
     return ''.html_safe if options[:label] == :none
 
     label_size = options.delete(:label_size) || "col-md-2"
     required_mark = check_required(options, f, attr)
     label = ''.html_safe + options.delete(:label)
-    if label.empty? && f.try(:object) && ((clazz = f.object.class).respond_to?(:gettext_translation_for_attribute_name))
-      label = s_(clazz.gettext_translation_for_attribute_name attr).html_safe
+    if label.empty? && f.try(:object) && (clazz = f.object.class).respond_to?(:gettext_translation_for_attribute_name)
+      label = s_(clazz.gettext_translation_for_attribute_name(attr)).titleize.html_safe
     end
 
     if options[:label_help].present?
@@ -327,16 +338,16 @@ module FormHelper
     label
   end
 
-  def check_required options, f, attr
+  def check_required(options, f, attr)
     required = options.delete(:required) # we don't want to use html5 required attr so we delete the option
     return ' *'.html_safe if required.nil? ? is_required?(f, attr) : required
   end
 
-  def blank_or_inherit_f(f, attr)
+  def blank_or_inherit_f(f, attr, blank_value: _("no value"))
     return true unless f.object.respond_to?(:parent_id) && f.object.parent_id
     inherited_value   = f.object.send(attr)
     inherited_value   = inherited_value.name_method if inherited_value.present? && inherited_value.respond_to?(:name_method)
-    inherited_value ||= _("no value")
+    inherited_value ||= blank_value
     _("Inherit parent (%s)") % inherited_value
   end
 
@@ -352,11 +363,13 @@ module FormHelper
   # +partial+    : String containing an optional partial into which we render
   def link_to_add_fields(name, f, association, partial = nil, options = {})
     new_object = f.object.class.reflect_on_association(association).klass.new
+    locals_option = options.delete(:locals) || {}
     fields = f.fields_for(association, new_object, :child_index => "new_#{association}") do |builder|
-      render((partial.nil? ? association.to_s.singularize + "_fields" : partial), :f => builder)
+      render((partial.nil? ? association.to_s.singularize + "_fields" : partial),
+             { :f => builder }.merge(locals_option))
     end
     options[:class] = link_to_add_fields_classes(options)
-    link_to_function(name, ("add_fields('#{options[:target]}', '#{association}', '#{escape_javascript(fields)}')").html_safe, options)
+    link_to_function(name, "add_fields('#{options[:target]}', '#{association}', '#{escape_javascript(fields)}')".html_safe, options)
   end
 
   def field(f, attr, options = {})
@@ -364,7 +377,7 @@ module FormHelper
     error       = options.delete(:error) || f.object.errors[attr] if f && f.object.respond_to?(:errors)
     help_inline = help_inline(options.delete(:help_inline), error)
     help_inline += options[:help_inline_permanent] unless options[:help_inline_permanent].nil?
-    size_class  = options.delete(:size) || "col-md-4"
+    size_class = options.delete(:size) || "col-md-4"
     wrapper_class = options.delete(:wrapper_class) || "form-group"
 
     label = options[:no_label] ? "" : add_label(options, f, attr)
@@ -394,15 +407,22 @@ module FormHelper
     end
   end
 
-  def ie_multipart_fix
-    # This hidden input is a workaround to fix IE Multipart form data bug (https://connect.microsoft.com/IE/Feedback/Details/868498)
-    # Only add this fix for two-pane layouts, as these are the only ones that trigger the bug
-    if request.headers["X-Foreman-Layout"] == 'two-pane'
-      content_tag(:input, '', {:type => "hidden", :name => "_ie_support"})
+  def advanced_switch_f(default_text, switch_text)
+    content_tag :div, :class => 'form-group' do
+      content_tag(:div, '', :class => 'col-md-2 control-label') +
+        content_tag(:div, :class => 'col-md-4') do
+          content_tag(:i, '', :class => 'fa fa-angle-right') + ' ' +
+            link_to(default_text, '#', :class => 'advanced_fields_switch', :'data-alternative-label' => switch_text)
+        end
     end
   end
 
   private
+
+  def form_select_f(f, attr, array, select_options = {}, html_options = {})
+    addClass html_options, "form-control"
+    f.select attr, array, select_options, html_options
+  end
 
   def link_to_add_fields_classes(options = {})
     classes = "btn btn-default #{options[:class]}"

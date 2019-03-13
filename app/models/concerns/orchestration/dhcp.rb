@@ -19,6 +19,11 @@ module Orchestration::DHCP
         !subnet.nil? && subnet.dhcp? && SETTINGS[:unattended] && (!provision? || operatingsystem.present?)
   end
 
+  def generate_dhcp_task_id(action, interface = self)
+    id = [interface.mac, interface.ip, interface.identifier, interface.id].find {|x| x&.present?}
+    "dhcp_#{action}_#{id}"
+  end
+
   def dhcp_records
     return [] unless dhcp?
     @dhcp_records ||= mac_addresses_for_provisioning.map do |record_mac|
@@ -96,7 +101,8 @@ module Orchestration::DHCP
   def build_dhcp_record(record_mac)
     raise ::Foreman::Exception.new(N_("DHCP not supported for this NIC")) unless dhcp?
     record_attrs = dhcp_attrs(record_mac)
-    record_type = (provision? && jumpstart?) ? Net::DHCP::SparcRecord : Net::DHCP::Record
+    record_type = operatingsystem.dhcp_record_type
+
     handle_validation_errors do
       record_type.new(record_attrs)
     end
@@ -123,6 +129,9 @@ module Orchestration::DHCP
       if jumpstart?
         jumpstart_arguments = os.jumpstart_params self.host, model.vendor_class
         dhcp_attr.merge! jumpstart_arguments unless jumpstart_arguments.empty?
+      elsif operatingsystem.respond_to?(:pxe_type) && operatingsystem.pxe_type == "ZTP" && operatingsystem.respond_to?(:ztp_arguments)
+        ztp_arguments = os.ztp_arguments self.host
+        dhcp_attr.merge! ztp_arguments unless ztp_arguments.empty?
       end
     end
 
@@ -135,33 +144,30 @@ module Orchestration::DHCP
   end
 
   def queue_dhcp
-    return unless (dhcp? || (old && old.dhcp?)) && orchestration_errors?
+    return log_orchestration_errors unless (dhcp? || (old&.dhcp?)) && orchestration_errors?
     queue_remove_dhcp_conflicts
     new_record? ? queue_dhcp_create : queue_dhcp_update
   end
 
   def queue_dhcp_create
     logger.debug "Scheduling new DHCP reservations for #{self}"
-    queue.create(:name   => _("Create DHCP Settings for %s") % self, :priority => 10,
-                 :action => [self, :set_dhcp]) if dhcp?
+    queue.create(id: generate_dhcp_task_id("create"), name: _("Create DHCP Settings for %s") % self, priority: 10, action: [self, :set_dhcp]) if dhcp?
   end
 
   def queue_dhcp_update
     return unless dhcp_update_required?
     logger.debug("Detected a changed required for DHCP record")
-    queue.create(:name => _("Remove DHCP Settings for %s") % old, :priority => 5,
-                 :action => [old, :del_dhcp]) if old.dhcp?
-    queue.create(:name   => _("Create DHCP Settings for %s") % self, :priority => 9,
-                 :action => [self, :set_dhcp]) if dhcp?
+    queue.create(id: generate_dhcp_task_id("remove", old), name: _("Remove DHCP Settings for %s") % old, priority: 5, action: [old, :del_dhcp]) if old.dhcp?
+    queue.create(id: generate_dhcp_task_id("create"), name: _("Create DHCP Settings for %s") % self, priority: 9, action: [self, :set_dhcp]) if dhcp?
   end
 
   # do we need to update our dhcp reservations
   def dhcp_update_required?
     # IP Address / name changed, or 'rebuild' action is triggered and DHCP record on the smart proxy is not present/identical.
-    return true if ((old.ip != ip) || (old.hostname != hostname) || (provision_mac_addresses_changed?) || (old.subnet != subnet) || (operatingsystem.boot_filename(old.host) != operatingsystem.boot_filename(self.host)) ||
+    return true if ((old.ip != ip) || (old.hostname != hostname) || provision_mac_addresses_changed? || (old.subnet != subnet) || (operatingsystem.boot_filename(old.host) != operatingsystem.boot_filename(self.host)) ||
                     (!old.build? && build? && !all_dhcp_records_valid?))
     # Handle jumpstart
-    #TODO, abstract this way once interfaces are fully used
+    # TODO, abstract this way once interfaces are fully used
     if self.is_a?(Host::Base) && jumpstart?
       if !old.build? || (old.medium != medium || old.arch != arch) ||
           (os && old.os && (old.os.name != os.name || old.os != os))
@@ -177,8 +183,7 @@ module Orchestration::DHCP
 
   def queue_dhcp_destroy
     return unless dhcp? && errors.empty?
-    queue.create(:name   => _("Remove DHCP Settings for %s") % self, :priority => 5,
-                 :action => [self, :del_dhcp])
+    queue.create(id: generate_dhcp_task_id("remove"), name: _("Remove DHCP Settings for %s") % self, priority: 5, action: [self, :del_dhcp])
     true
   end
 
@@ -186,8 +191,7 @@ module Orchestration::DHCP
     return if !dhcp? || !overwrite?
 
     logger.debug "Scheduling DHCP conflicts removal"
-    queue.create(:name   => _("DHCP conflicts removal for %s") % self, :priority => 5,
-                 :action => [self, :del_dhcp_conflicts])
+    queue.create(id: generate_dhcp_task_id("conflicts_remove"), name: _("DHCP conflicts removal for %s") % self, priority: 5, action: [self, :del_dhcp_conflicts])
   end
 
   def dhcp_conflict_detected?

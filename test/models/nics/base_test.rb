@@ -1,5 +1,28 @@
 require 'test_helper'
 
+def valid_interfaces_names
+  [
+    RFauxFactory.gen_alpha(1).downcase,
+    RFauxFactory.gen_alpha(rand(1..255)).downcase,
+    RFauxFactory.gen_alphanumeric(rand(1..255)).downcase,
+    RFauxFactory.gen_numeric_string(rand(1..255)).downcase,
+    RFauxFactory.gen_alpha(255).downcase
+  ]
+end
+
+def invalid_interfaces_names
+  [
+    RFauxFactory.gen_alpha(256).downcase,
+    RFauxFactory.gen_alphanumeric(256).downcase,
+    RFauxFactory.gen_numeric_string(256).downcase,
+    RFauxFactory.gen_cjk,
+    RFauxFactory.gen_cyrillic,
+    RFauxFactory.gen_html,
+    RFauxFactory.gen_latin1,
+    RFauxFactory.gen_utf8
+  ]
+end
+
 class Nic::BaseTest < ActiveSupport::TestCase
   setup do
     disable_orchestration
@@ -12,21 +35,56 @@ class Nic::BaseTest < ActiveSupport::TestCase
     for(:mac)
 
   test '#host_managed? returns false if interface does not have a host' do
-    nic = FactoryGirl.build(:nic_base)
+    nic = FactoryBot.build_stubbed(:nic_base)
     nic.host = nil
     refute nic.host_managed?
   end
 
+  test 'should create with multiple valid names' do
+    host = FactoryBot.build_stubbed(:host, :managed)
+    valid_interfaces_names.each do |name|
+      nic = FactoryBot.build_stubbed(:nic_managed, :name => name, :host => host)
+      assert nic.valid?, "Can't create nic with valid name #{name}"
+    end
+  end
+
+  test 'should update with multiple valid names' do
+    host = FactoryBot.create(:host, :managed)
+    valid_interfaces_names.each do |name|
+      name = name[1..254 - host.domain.name.length] if name.length + host.domain.name.length > 254
+      host.interfaces.first.name = name
+      assert host.valid?, "Can't update nic with valid name #{name}.#{host.domain.name}"
+    end
+  end
+
+  test 'should not create with multiple invalid names' do
+    host = FactoryBot.build_stubbed(:host, :managed)
+    invalid_interfaces_names.each do |name|
+      nic = FactoryBot.build_stubbed(:nic_managed, :name => name, :host => host)
+      refute nic.valid?, "Can create nic with invalid name #{name}"
+      assert_includes nic.errors.keys, :name
+    end
+  end
+
+  test 'should not update with multiple invalid names' do
+    host = FactoryBot.create(:host, :managed)
+    invalid_interfaces_names.each do |name|
+      host.interfaces.first.name = name
+      refute host.valid?, "Can update nic with valid name #{name}"
+      assert host.interfaces.any? { |i| i.errors[:name].present? }
+    end
+  end
+
   test '#host_managed? returns false if associated host is unmanaged' do
-    nic = FactoryGirl.build(:nic_base)
-    nic.host = FactoryGirl.build(:host)
+    nic = FactoryBot.build_stubbed(:nic_base)
+    nic.host = FactoryBot.build_stubbed(:host)
     nic.host.managed = false
     refute nic.host_managed?
   end
 
   test '#host_managed? returns false in non-unattended mode' do
-    nic = FactoryGirl.build(:nic_base)
-    nic.host = FactoryGirl.build(:host)
+    nic = FactoryBot.build_stubbed(:nic_base)
+    nic.host = FactoryBot.build_stubbed(:host)
     nic.host.managed = true
     original, SETTINGS[:unattended] = SETTINGS[:unattended], false
     refute nic.host_managed?
@@ -34,8 +92,8 @@ class Nic::BaseTest < ActiveSupport::TestCase
   end
 
   test '#host_managed? return true if associated host is managed in unattended mode' do
-    nic = FactoryGirl.build(:nic_base)
-    nic.host = FactoryGirl.build(:host)
+    nic = FactoryBot.build_stubbed(:nic_base)
+    nic.host = FactoryBot.build_stubbed(:host)
     nic.host.managed = true
     original, SETTINGS[:unattended] = SETTINGS[:unattended], true
     assert nic.host_managed?
@@ -43,13 +101,13 @@ class Nic::BaseTest < ActiveSupport::TestCase
   end
 
   test 'nic requires a host' do
-    nic = FactoryGirl.build(:nic_base)
+    nic = FactoryBot.build_stubbed(:nic_base)
     refute nic.valid?, "Can't be valid without a host: #{nic.errors.messages}"
     assert_includes nic.errors.keys, :host
   end
 
   test 'nic is invalid when subnet types are wrong' do
-    nic = FactoryGirl.build(:nic_base)
+    nic = FactoryBot.build_stubbed(:nic_base)
     subnetv4 = Subnet::Ipv4.new
     subnetv6 = Subnet::Ipv6.new
 
@@ -62,8 +120,8 @@ class Nic::BaseTest < ActiveSupport::TestCase
   end
 
   context '#matches_subnet?' do
-    let(:subnet) { FactoryGirl.build(:subnet_ipv4, :network => '10.10.10.0') }
-    let(:nic) { FactoryGirl.build(:nic_base, :ip => '10.10.10.1', :subnet => subnet) }
+    let(:subnet) { FactoryBot.build_stubbed(:subnet_ipv4, :network => '10.10.10.0') }
+    let(:nic) { FactoryBot.build_stubbed(:nic_base, :ip => '10.10.10.1', :subnet => subnet) }
 
     test 'is true when subnet contains ip' do
       assert nic.matches_subnet?(:ip, :subnet)
@@ -76,7 +134,7 @@ class Nic::BaseTest < ActiveSupport::TestCase
   end
 
   context 'there is already an interface with a MAC and IP' do
-    let(:host) { FactoryGirl.create(:host, :managed, :with_ipv6) }
+    let(:host) { FactoryBot.create(:host, :managed, :with_ipv6) }
 
     describe 'creation of another nic with already used MAC and IP' do
       let(:nic) do
@@ -172,8 +230,8 @@ class Nic::BaseTest < ActiveSupport::TestCase
   end
 
   describe 'normalization' do
-    let(:host) { FactoryGirl.build(:host) }
-    let(:nic) { FactoryGirl.build(:nic_base, :host => host) }
+    let(:host) { FactoryBot.build_stubbed(:host) }
+    let(:nic) { FactoryBot.build_stubbed(:nic_base, :host => host) }
 
     test 'it normalizes ipv4 address' do
       nic.ip = '001.001.001.001'
@@ -193,7 +251,7 @@ class Nic::BaseTest < ActiveSupport::TestCase
   end
 
   test '#children_mac_addresses defaults to empty array' do
-    nic = FactoryGirl.build(:nic_base)
+    nic = FactoryBot.build_stubbed(:nic_base)
     assert_equal [], nic.children_mac_addresses
   end
 end

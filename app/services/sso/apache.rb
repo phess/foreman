@@ -32,7 +32,7 @@ module SSO
       group_count = request.env['REMOTE_USER_GROUP_N'].to_i
       if group_count > 0
         attrs[:groups] = []
-        group_count.times { |i| attrs[:groups]<< request.env["REMOTE_USER_GROUP_#{i+1}"] }
+        group_count.times { |i| attrs[:groups] << request.env["REMOTE_USER_GROUP_#{i + 1}"] }
       end
 
       return false unless User.find_or_create_external_user(attrs, Setting['authorize_login_delegation_auth_source_user_autocreate'])
@@ -76,7 +76,7 @@ module SSO
     def convert_encoding(value)
       if value.respond_to?(:force_encoding)
         value.force_encoding(Encoding::UTF_8)
-        if !value.valid_encoding?
+        unless value.valid_encoding?
           value.encode(Encoding::UTF_8, Encoding::ISO_8859_1, { :invalid => :replace, :replace => '-' }).force_encoding(Encoding::UTF_8)
         end
       else

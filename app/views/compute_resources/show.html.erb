@@ -1,4 +1,3 @@
-<%= javascript 'compute_resource' %>
 <% title @compute_resource.name %>
 
 <% title_actions display_link_if_authorized(_("Associate VMs"),
@@ -16,7 +15,8 @@
   <% if @compute_resource.capabilities.include?(:key_pair) %>
     <li><a href="#key_pairs" data-toggle="tab"><%= _("SSH keys") %></a></li>
   <% end %>
-    <li><a href="#compute_profiles" data-toggle="tab"><%= _("Compute profiles") %></a></li>
+  <li><a href="#compute_profiles" data-toggle="tab"><%= _("Compute profiles") %></a></li>
+  <%= render_tab_header_for(:main_tabs, :subject => @compute_resource) %>
 </ul>
 
 <div class="tab-content">
@@ -49,7 +49,7 @@
   <% if @compute_resource.capabilities.include?(:image) %>
     <div id="images" class="tab-pane">
       <%= title_actions(new_link(_("Create Image"), { :compute_resource_id => @compute_resource.id, :controller => :images }, { :data=>{:target=>"full-page"} })) %>
-      <div id="images_list" data-url=<%= compute_resource_images_path(@compute_resource) %>>
+      <div id="images_list" data-url=<%= compute_resource_images_path(@compute_resource, { :partial => true }) %>>
         <%= spinner(_('Loading images information ...')) %>
       </div>
     </div>
@@ -62,7 +62,7 @@
     </div>
   <% end %>
   <div id="compute_profiles" class="tab-pane">
-    <table class="<%= table_css_classes 'table-two-pane table-fixed' %>" id="two_pane_content">
+    <table class="<%= table_css_classes 'table-fixed' %>">
       <thead>
         <tr>
           <th class="col-md-8"><%= _("Compute profile") %></th>
@@ -78,7 +78,7 @@
                             new_compute_profile_compute_resource_compute_attribute_path(compute_profile.to_param, @compute_resource.to_param)
                           end %>
           <tr>
-            <td class="display-two-pane ellipsis"><%= link_to(compute_profile.name, which_path) %></td>
+            <td class="ellipsis"><%= link_to(compute_profile.name, which_path) %></td>
             <td>
               <% set = @compute_resource.compute_attributes.where(:compute_profile_id => compute_profile.id).first %>
               <%= set ? set.name : content_tag(:span, _("unspecified"), :class => 'gray') %>
@@ -88,4 +88,5 @@
       </tbody>
     </table>
   </div>
+  <%= render_tab_content_for(:main_tabs, :subject => @compute_resource) %>
 </div>

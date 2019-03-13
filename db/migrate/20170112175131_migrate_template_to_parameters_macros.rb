@@ -1,4 +1,4 @@
-class MigrateTemplateToParametersMacros < ActiveRecord::Migration
+class MigrateTemplateToParametersMacros < ActiveRecord::Migration[4.2]
   def up
     Template.unscoped.descendants.each do |klass|
       klass.all.each do |template|
@@ -21,20 +21,22 @@ class MigrateTemplateToParametersMacros < ActiveRecord::Migration
     end
 
     LookupKey.descendants.each do |klass|
-      klass.all.each do |parameter|
-        parameter.default_value = convert(parameter.default_value.to_s)
-        if parameter.default_value_changed?
+      klass.all.find_each do |parameter|
+        next unless parameter.default_value.contains_erb?
+        value = convert(parameter.default_value.to_s)
+        if parameter.default_value.to_s != value
           # we need to skip validations so we use #update_attributes
-          parameter.update_attribute :default_value, parameter.value
+          parameter.update_attribute :default_value, value
         end
       end
     end
 
-    LookupValue.all.each do |parameter|
-      parameter.value = convert(parameter.value.to_s)
-      if parameter.value_changed?
+    LookupValue.all.find_each do |parameter|
+      next unless parameter.value.contains_erb?
+      value = convert(parameter.value.to_s)
+      if parameter.value.to_s != value
         # we need to skip validations so we use #update_attributes
-        parameter.update_attribute :value, parameter.value
+        parameter.update_attribute :value, value
       end
     end
   end
@@ -45,6 +47,7 @@ class MigrateTemplateToParametersMacros < ActiveRecord::Migration
   end
 
   def convert(content)
+    return nil if content.nil?
     content = content.gsub(/@host\.param_true\?\((.*?)\)/, 'host_param_true?(\1)')
     content = content.gsub(/@host\.param_false\?\((.*?)\)/, 'host_param_false?(\1)')
     content = content.gsub(/@host\.params\[(.*?)\]/, 'host_param(\1)')

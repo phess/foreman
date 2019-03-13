@@ -1,6 +1,7 @@
 <%#
 kind: PXEGrub
 name: Kickstart default PXEGrub
+model: ProvisioningTemplate
 oses:
 - CentOS
 - Fedora
@@ -49,18 +50,18 @@ oses:
 
   # optional repository for Atomic
   if @host.operatingsystem.name.match(/Atomic/i)
-    options.push("inst.repo=#{@host.operatingsystem.medium_uri(@host)}")
+    options.push("inst.repo=#{medium_uri}")
   end
 
-  if @host.params['blacklist']
-    options.push("modprobe.blacklist=" + @host.params['blacklist'].gsub(' ', ''))
+  if @host.operatingsystem.name.match(/Atomic/i) || host_param('kickstart_liveimg')
+    options.push('inst.stage2=' + @host.operatingsystem.medium_uri(@host).to_s)
   end
 
   ksoptions = options.join(' ')
 -%>
 
 default=0
-timeout=<%= @host.params['loader_timeout'] || 10 %>
+timeout=<%= host_param('loader_timeout') || 10 %>
 
 title <%= template_name %>
   root (nd)

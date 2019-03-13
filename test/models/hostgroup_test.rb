@@ -1,5 +1,19 @@
 require 'test_helper'
 
+# Generates a list of valid host group names.
+def valid_hostgroup_name_list
+  # Note::
+  # Host group name max length is 245 chars.
+  # 220 chars for html as the largest html tag in fauxfactory is 10 chars long,
+  # so 245 - (10 chars + 10 chars + '<></>' chars) = 220 chars.
+  [
+    RFauxFactory.gen_alpha(1),
+    RFauxFactory.gen_alpha(245),
+    *RFauxFactory.gen_strings(1..245, exclude: [:html, :punctuation]).values,
+    RFauxFactory.gen_html(rand((1..220)))
+  ]
+end
+
 class HostgroupTest < ActiveSupport::TestCase
   setup do
     User.current = users :admin
@@ -7,6 +21,8 @@ class HostgroupTest < ActiveSupport::TestCase
 
   should validate_presence_of(:name)
   should validate_uniqueness_of(:name).scoped_to(:ancestry).case_insensitive
+  should allow_values(*valid_hostgroup_name_list).for(:name)
+  should_not allow_values(*invalid_name_list).for(:name)
   should allow_value(nil).for(:root_pass)
   should validate_length_of(:root_pass).is_at_least(8).
     with_message('should be 8 characters or more')
@@ -43,8 +59,8 @@ class HostgroupTest < ActiveSupport::TestCase
     assert_equal "2", second.parameters["secondA"]
 
     third = Hostgroup.new(:name => "ThirdA", :parent_id => second.id,
-                          :group_parameters_attributes => { pid += 1 => {"name"=>"topB", "value"=>"3"},
-                                                            pid +  1 => {"name"=>"topA", "value"=>"3"}})
+                          :group_parameters_attributes => { pid += 1 => {"name" => "topB", "value" => "3"},
+                                                            pid +  1 => {"name" => "topA", "value" => "3"}})
     assert third.save
 
     assert third.parameters.include? "topA"
@@ -74,7 +90,7 @@ class HostgroupTest < ActiveSupport::TestCase
     child = nil
 
     as_admin do
-      top = FactoryGirl.create(:hostgroup, :name => "topA",
+      top = FactoryBot.create(:hostgroup, :name => "topA",
                                :group_parameters_attributes => { pid += 1 => {"name" => "topA", "value" => "1"},
                                                                  pid += 1 => {"name" => "topB", "value" => "1"}})
       child = Hostgroup.create!(:name => "secondB", :parent_id => top.id)
@@ -94,21 +110,21 @@ class HostgroupTest < ActiveSupport::TestCase
   end
 
   test "changing name of hostgroup updates other hostgroup labels" do
-    #setup - add parent to hostgroup :common (not in fixtures, since no field parent_id)
+    # setup - add parent to hostgroup :common (not in fixtures, since no field parent_id)
     hostgroup = hostgroups(:db)
     parent_hostgroup = hostgroups(:common)
     hostgroup.parent_id = parent_hostgroup.id
     assert hostgroup.save!
 
     # change name of parent
-    assert parent_hostgroup.update_attributes(:name => "new_common")
+    assert parent_hostgroup.update(:name => "new_common")
     # check if hostgroup(:db) label changed
     hostgroup.reload
     assert_equal "new_common/db", hostgroup.title
   end
 
   test "deleting a hostgroup with children does not change labels" do
-    #setup - get label "common/db"
+    # setup - get label "common/db"
     hostgroup = hostgroups(:db)
     parent_hostgroup = hostgroups(:common)
     hostgroup.parent_id = parent_hostgroup.id
@@ -116,7 +132,7 @@ class HostgroupTest < ActiveSupport::TestCase
     hostgroup.reload
     assert_equal "Common/db", hostgroup.title
 
-    #attempt to destroy parent hostgroup
+    # attempt to destroy parent hostgroup
     begin
       assert_not parent_hostgroup.destroy
     rescue Ancestry::AncestryException
@@ -267,7 +283,7 @@ class HostgroupTest < ActiveSupport::TestCase
 
   describe '#individual_puppetclasses' do
     setup do
-      @hostgroup = FactoryGirl.create(:hostgroup, :with_puppetclass)
+      @hostgroup = FactoryBot.create(:hostgroup, :with_puppetclass)
       @puppetclass = @hostgroup.puppetclasses.first
     end
 
@@ -281,7 +297,7 @@ class HostgroupTest < ActiveSupport::TestCase
       setup do
         @environment = environments(:production)
         @puppetclass.environments << @environment
-        @other_puppetclass = FactoryGirl.create(:puppetclass)
+        @other_puppetclass = FactoryBot.create(:puppetclass)
         @hostgroup.puppetclasses << @other_puppetclass
         @hostgroup.stubs(:environment).returns(@environment)
       end
@@ -323,8 +339,8 @@ class HostgroupTest < ActiveSupport::TestCase
   end
 
   test "root_pass inherited from parent if blank" do
-    parent = FactoryGirl.create(:hostgroup, :root_pass => '12345678')
-    hostgroup = FactoryGirl.build(:hostgroup, :parent => parent, :root_pass => '')
+    parent = FactoryBot.create(:hostgroup, :root_pass => '12345678')
+    hostgroup = FactoryBot.build(:hostgroup, :parent => parent, :root_pass => '')
     assert_equal parent.read_attribute(:root_pass), hostgroup.root_pass
     hostgroup.save!
     assert hostgroup.read_attribute(:root_pass).blank?, 'root_pass should not be copied and stored on child'
@@ -332,7 +348,7 @@ class HostgroupTest < ActiveSupport::TestCase
 
   test "root_pass inherited from settings if blank" do
     Setting[:root_pass] = '12345678'
-    hostgroup = FactoryGirl.build(:hostgroup, :root_pass => '')
+    hostgroup = FactoryBot.build(:hostgroup, :root_pass => '')
     assert_equal '12345678', hostgroup.root_pass
     hostgroup.save!
     assert hostgroup.read_attribute(:root_pass).blank?, 'root_pass should not be copied and stored on child'
@@ -340,57 +356,100 @@ class HostgroupTest < ActiveSupport::TestCase
 
   test "root_pass inherited from settings if group and parent are blank" do
     Setting[:root_pass] = '12345678'
-    parent = FactoryGirl.create(:hostgroup, :root_pass => '')
-    hostgroup = FactoryGirl.build(:hostgroup, :parent => parent, :root_pass => '')
+    parent = FactoryBot.create(:hostgroup, :root_pass => '')
+    hostgroup = FactoryBot.build(:hostgroup, :parent => parent, :root_pass => '')
     assert_equal '12345678', hostgroup.root_pass
     hostgroup.save!
     assert hostgroup.read_attribute(:root_pass).blank?, 'root_pass should not be copied and stored on child'
   end
 
   test "hostgroup name can't be too big to create lookup value matcher over 255 characters" do
-    parent = FactoryGirl.create(:hostgroup)
+    parent = FactoryBot.create(:hostgroup)
+    # rubocop:disable Performance/FixedSize
     min_lookupvalue_length = "hostgroup=".length + parent.title.length + 1
+    # rubocop:enable Performance/FixedSize
     hostgroup = Hostgroup.new :parent => parent, :name => 'a' * 256
     refute_valid hostgroup
     assert_equal "is too long (maximum is %s characters)" % (255 - min_lookupvalue_length), hostgroup.errors[:name].first
   end
 
   test "hostgroup name can be up to 255 characters" do
-    parent = FactoryGirl.create(:hostgroup)
+    parent = FactoryBot.create(:hostgroup)
+    # rubocop:disable Performance/FixedSize
     min_lookupvalue_length = "hostgroup=".length + parent.title.length + 1
+    # rubocop:enable Performance/FixedSize
     hostgroup = Hostgroup.new :parent => parent, :name => 'a' * (255 - min_lookupvalue_length)
     assert_valid hostgroup
   end
 
   test "hostgroup should not save when matcher is exactly 256 characters" do
-    parent = FactoryGirl.create(:hostgroup, :name => 'a' * 244)
+    parent = FactoryBot.create(:hostgroup, :name => 'a' * 244)
     hostgroup = Hostgroup.new :parent => parent, :name => 'b'
     refute_valid hostgroup
     assert_equal _("is too long (maximum is 0 characters)"), hostgroup.errors[:name].first
   end
 
   test "to_param" do
-    parent = FactoryGirl.create(:hostgroup, :name => 'a')
+    parent = FactoryBot.create(:hostgroup, :name => 'a')
     hostgroup = Hostgroup.new(:parent => parent, :name => 'b')
     assert_equal "#{hostgroup.id}-a-b",  hostgroup.to_param
   end
 
   test "to_param calls ancestry when title is not yet saved" do
-    parent = FactoryGirl.create(:hostgroup, :name => 'a')
+    parent = FactoryBot.create(:hostgroup, :name => 'a')
     hostgroup = Hostgroup.new(:parent => parent, :name => 'b')
     hostgroup.expects(:ancestry).once
     hostgroup.to_param
   end
 
   test "to_param doesn't call ancestry when title is saved" do
-    parent = FactoryGirl.create(:hostgroup, :name => 'a')
+    parent = FactoryBot.create(:hostgroup, :name => 'a')
     hostgroup = Hostgroup.create(:parent => parent, :name => 'b')
     hostgroup.expects(:ancestry).never
     hostgroup.to_param
   end
 
+  test 'with both subnet and subnet6 should be valid if VLAN ID is consistent between subnets' do
+    domain = FactoryBot.create(:domain)
+    subnet = FactoryBot.create(:subnet_ipv4, :domains => [domain], :vlanid => 14)
+    subnet6 = FactoryBot.create(:subnet_ipv6, :domains => [domain], :vlanid => 14)
+    hostgroup = FactoryBot.build(:hostgroup, :subnet => subnet, :subnet6 => subnet6)
+    assert_valid hostgroup
+  end
+
+  test 'with both subnet and subnet6 should not be valid if VLAN ID mismatch between subnets' do
+    domain = FactoryBot.create(:domain)
+    subnet = FactoryBot.create(:subnet_ipv4, :domains => [domain], :vlanid => 3)
+    subnet6 = FactoryBot.create(:subnet_ipv6, :domains => [domain], :vlanid => 4)
+    hostgroup = FactoryBot.build(:hostgroup, :subnet => subnet, :subnet6 => subnet6)
+    refute_valid hostgroup
+    assert_includes hostgroup.errors.keys, :subnet_id
+
+    subnet6 = FactoryBot.create(:subnet_ipv6, :domains => [domain], :vlanid => nil)
+    hostgroup = FactoryBot.build(:hostgroup, :subnet => subnet, :subnet6 => subnet6)
+    refute_valid hostgroup
+    assert_includes hostgroup.errors.keys, :subnet_id
+  end
+
+  test 'with both subnet and subnet6 should be valid if MTU is consistent between subnets' do
+    domain = FactoryBot.create(:domain)
+    subnet = FactoryBot.create(:subnet_ipv4, :domains => [domain], :mtu => 1496)
+    subnet6 = FactoryBot.create(:subnet_ipv6, :domains => [domain], :mtu => 1496)
+    hostgroup = FactoryBot.build(:hostgroup, :subnet => subnet, :subnet6 => subnet6)
+    assert_valid hostgroup
+  end
+
+  test 'with both subnet and subnet6 should not be valid if MTU mismatch between subnets' do
+    domain = FactoryBot.create(:domain)
+    subnet = FactoryBot.create(:subnet_ipv4, :domains => [domain], :mtu => 1496)
+    subnet6 = FactoryBot.create(:subnet_ipv6, :domains => [domain], :mtu => 1500)
+    hostgroup = FactoryBot.build(:hostgroup, :subnet => subnet, :subnet6 => subnet6)
+    refute_valid hostgroup
+    assert_includes hostgroup.errors.keys, :subnet_id
+  end
+
   context "#clone" do
-    let(:group) {FactoryGirl.create(:hostgroup, :name => 'a')}
+    let(:group) {FactoryBot.create(:hostgroup, :name => 'a')}
 
     test "clone should clone config groups as well" do
       config_group = ConfigGroup.create!(:name => 'Blah')
@@ -401,7 +460,7 @@ class HostgroupTest < ActiveSupport::TestCase
     end
 
     test "clone should clone puppet classes" do
-      group.puppetclasses << FactoryGirl.create(:puppetclass)
+      group.puppetclasses << FactoryBot.create(:puppetclass)
       cloned = group.clone("new_name")
       assert_equal group.hostgroup_classes.map(&:puppetclass_id), cloned.hostgroup_classes.map(&:puppetclass_id)
     end
@@ -410,9 +469,9 @@ class HostgroupTest < ActiveSupport::TestCase
       group.group_parameters.create!(:name => "foo", :value => "bar")
       cloned = group.clone("new_name")
       cloned.save
-      assert_equal cloned.group_parameters.map{|p| [p.name, p.value]}, group.group_parameters.map{|p| [p.name, p.value]}
-      refute_equal cloned.group_parameters.map{|p| p.id}, group.group_parameters.map{|p| p.id}
-      refute_equal cloned.group_parameters.map{|p| p.reference_id}, group.group_parameters.map{|p| p.reference_id}
+      assert_equal cloned.group_parameters.map {|p| [p.name, p.value]}, group.group_parameters.map {|p| [p.name, p.value]}
+      refute_equal cloned.group_parameters.map {|p| p.id}, group.group_parameters.map {|p| p.id}
+      refute_equal cloned.group_parameters.map {|p| p.reference_id}, group.group_parameters.map {|p| p.reference_id}
     end
 
     test "clone should clone lookup values" do
@@ -427,8 +486,8 @@ class HostgroupTest < ActiveSupport::TestCase
     end
 
     test '#classes etc. on cloned group return the same' do
-      parent = FactoryGirl.create(:hostgroup, :with_config_group, :with_puppetclass)
-      group = FactoryGirl.create(:hostgroup, :with_config_group, :with_puppetclass, :parent => parent)
+      parent = FactoryBot.create(:hostgroup, :with_config_group, :with_puppetclass)
+      group = FactoryBot.create(:hostgroup, :with_config_group, :with_puppetclass, :parent => parent)
       cloned = group.clone('cloned')
       assert_equal group.individual_puppetclasses.map(&:id), cloned.individual_puppetclasses.map(&:id)
       assert_equal group.classes_in_groups.map(&:id), cloned.classes_in_groups.map(&:id)
@@ -438,90 +497,34 @@ class HostgroupTest < ActiveSupport::TestCase
     end
 
     test 'without save makes no changes' do
-      group = FactoryGirl.create(:hostgroup, :with_config_group, :with_puppetclass)
-      FactoryGirl.create(:puppetclass_lookup_key, :as_smart_class_param, :with_override, :path => "hostgroup\ncomment", :puppetclass => group.puppetclasses.first, :overrides => {group.lookup_value_matcher => 'test'})
+      group = FactoryBot.create(:hostgroup, :with_config_group, :with_puppetclass)
+      FactoryBot.create(:puppetclass_lookup_key, :as_smart_class_param, :with_override, :path => "hostgroup\ncomment", :puppetclass => group.puppetclasses.first, :overrides => {group.lookup_value_matcher => 'test'})
       ActiveRecord::Base.any_instance.expects(:destroy).never
       ActiveRecord::Base.any_instance.expects(:save).never
       group.clone
     end
 
     test "clone with config group should run validations once" do
-      group = FactoryGirl.create(:hostgroup, :with_config_group)
+      group = FactoryBot.create(:hostgroup, :with_config_group)
       cloned = group.clone
       refute cloned.valid?
       assert_equal 1, cloned.errors[:name].size
     end
 
     test "when updating environment for a new (or cloned) hostgroup, the individual_puppetclasses method should return correctly" do
-      group = FactoryGirl.create(:hostgroup, :with_config_group, :with_puppetclass)
+      group = FactoryBot.create(:hostgroup, :with_config_group, :with_puppetclass)
       cloned = Hostgroup.new
       cloned.puppetclasses = group.puppetclasses
       assert_equal cloned.individual_puppetclasses, group.individual_puppetclasses
     end
   end
 
-  describe '#param_true?' do
-    test 'returns false for unknown parameter' do
-      Foreman::Cast.expects(:to_bool).never
-      refute FactoryGirl.build(:hostgroup).param_true?('unknown')
-    end
-
-    test 'returns false for parameter with false-like value' do
-      Foreman::Cast.expects(:to_bool).with('0').returns(false)
-      group = FactoryGirl.create(:hostgroup)
-      FactoryGirl.create(:hostgroup_parameter, :hostgroup => group, :name => 'group_param', :value => '0')
-      refute group.reload.param_true?('group_param')
-    end
-
-    test 'returns true for parameter with true-like value' do
-      Foreman::Cast.expects(:to_bool).with('1').returns(true)
-      group = FactoryGirl.create(:hostgroup)
-      FactoryGirl.create(:hostgroup_parameter, :hostgroup => group, :name => 'group_param', :value => '1')
-      assert group.reload.param_true?('group_param')
-    end
-
-    test 'uses inherited parameters' do
-      Foreman::Cast.expects(:to_bool).with('1').returns(true)
-      group = FactoryGirl.create(:hostgroup, :with_parent)
-      FactoryGirl.create(:hostgroup_parameter, :hostgroup => group.parent, :name => 'group_param', :value => '1')
-      assert group.reload.param_true?('group_param')
-    end
-  end
-
-  describe '#param_false?' do
-    test 'returns false for unknown parameter' do
-      Foreman::Cast.expects(:to_bool).never
-      refute FactoryGirl.build(:hostgroup).param_false?('unknown')
-    end
-
-    test 'returns true for parameter with false-like value' do
-      Foreman::Cast.expects(:to_bool).with('0').returns(false)
-      group = FactoryGirl.create(:hostgroup)
-      FactoryGirl.create(:hostgroup_parameter, :hostgroup => group, :name => 'group_param', :value => '0')
-      assert group.reload.param_false?('group_param')
-    end
-
-    test 'returns false for parameter with true-like value' do
-      Foreman::Cast.expects(:to_bool).with('1').returns(true)
-      group = FactoryGirl.create(:hostgroup)
-      FactoryGirl.create(:hostgroup_parameter, :hostgroup => group, :name => 'group_param', :value => '1')
-      refute group.reload.param_false?('group_param')
-    end
-
-    test 'uses inherited parameters' do
-      Foreman::Cast.expects(:to_bool).with('0').returns(false)
-      group = FactoryGirl.create(:hostgroup, :with_parent)
-      FactoryGirl.create(:hostgroup_parameter, :hostgroup => group.parent, :name => 'group_param', :value => '0')
-      assert group.reload.param_false?('group_param')
-    end
-  end
-
   test '#children_hosts_count' do
-    group = FactoryGirl.create(:hostgroup, :with_parent, :with_os, :with_domain)
-    FactoryGirl.create_list(:host, 3, :managed, :hostgroup => group)
+    group = FactoryBot.create(:hostgroup, :with_parent, :with_os, :with_domain)
+    FactoryBot.create_list(:host, 3, :managed, :hostgroup => group)
     assert_equal(3, group.parent.children_hosts_count)
-    nested_group = FactoryGirl.create(:hostgroup, :parent => group)
-    FactoryGirl.create_list(:host, 4, :managed, :hostgroup => nested_group)
+    nested_group = FactoryBot.create(:hostgroup, :parent => group)
+    FactoryBot.create_list(:host, 4, :managed, :hostgroup => nested_group)
     assert_equal(7, group.parent.children_hosts_count)
   end
 
@@ -534,7 +537,7 @@ class HostgroupTest < ActiveSupport::TestCase
   end
 
   test 'should be invalid when subnet types are wrong' do
-    hostgroup = FactoryGirl.build(:hostgroup)
+    hostgroup = FactoryBot.build_stubbed(:hostgroup)
     subnetv4 = Subnet::Ipv4.new
     subnetv6 = Subnet::Ipv6.new
 
@@ -548,8 +551,8 @@ class HostgroupTest < ActiveSupport::TestCase
 
   describe '#environment' do
     setup do
-      @hostgroup       = FactoryGirl.create(:hostgroup, :with_puppetclass)
-      @new_environment = FactoryGirl.create(:environment)
+      @hostgroup       = FactoryBot.create(:hostgroup, :with_puppetclass)
+      @new_environment = FactoryBot.create(:environment)
     end
 
     test 'changing it should preserve puppetclasses' do
@@ -565,9 +568,9 @@ class HostgroupTest < ActiveSupport::TestCase
 
   context "recreating host configs" do
     setup do
-      @hostgroup = FactoryGirl.create(:hostgroup, :with_parent)
-      @host = FactoryGirl.create(:host, :managed, :hostgroup => @hostgroup)
-      @host2 = FactoryGirl.create(:host, :managed, :hostgroup => @hostgroup.parent)
+      @hostgroup = FactoryBot.create(:hostgroup, :with_parent)
+      @host = FactoryBot.create(:host, :managed, :hostgroup => @hostgroup)
+      @host2 = FactoryBot.create(:host, :managed, :hostgroup => @hostgroup.parent)
     end
 
     test "recreate config with success - only empty" do

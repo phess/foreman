@@ -11,9 +11,19 @@ module FogExtensions
         name
       end
 
-      def nics_attributes=(attrs); end
+      def cpu_mode
+        attributes[:cpu][:mode]
+      end
 
-      def volumes_attributes=(attrs); end
+      def cpu_mode=(cpumode)
+        attributes[:cpu][:mode] = (cpumode == 'default') ? nil : cpumode
+      end
+
+      def nics_attributes=(attrs)
+      end
+
+      def volumes_attributes=(attrs)
+      end
 
       # Libvirt expect units in KB, while we use bytes
       def memory

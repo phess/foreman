@@ -17,7 +17,7 @@ module Foreman::Controller::Parameters::Hostgroup
           # Relations in alphabetical order
           :arch, :arch_id, :arch_name,
           :architecture_id, :architecture_name,
-          :domain_id, :domain_name,
+          :compute_resource_id, :domain_id, :domain_name,
           :environment_id, :environment_name,
           :medium_id, :medium_name,
           :subnet_id, :subnet_name,
@@ -37,7 +37,7 @@ module Foreman::Controller::Parameters::Hostgroup
     end
   end
 
-  def hostgroup_params
-    self.class.hostgroup_params_filter.filter_params(params, parameter_filter_context)
+  def hostgroup_params(top_level_hash = controller_name.singularize)
+    self.class.hostgroup_params_filter.filter_params(params, parameter_filter_context, top_level_hash)
   end
 end

@@ -16,11 +16,11 @@ class StatisticsController < ApplicationController
   private
 
   def find_stat
-    @stat = charts.detect{|ch| ch.id.to_s == params[:id]}
+    @stat = charts.detect {|ch| ch.id.to_s == params[:id]}
     @stat || not_found
   end
 
   def charts
-    ::Statistics.charts
+    ::Statistics.charts(Organization.current.try(:id), Location.current.try(:id))
   end
 end

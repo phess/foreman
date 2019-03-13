@@ -1,6 +1,9 @@
 <%#
 kind: ZTP
 name: Junos default ZTP config
+model: ProvisioningTemplate
+oses:
+- Junos
 -%>
 system {
     host-name <%= @host.shortname %>;

@@ -1,12 +1,22 @@
 require 'fog_extensions/vsphere/mini_servers'
 require 'foreman/exception'
 
+begin
+  require 'rbvmomi'
+rescue LoadError
+  # rbvmomi might not be installed
+end
+
 module Foreman::Model
   class Vmware < ComputeResource
     include ComputeResourceConsoleCommon
     include ComputeResourceCaching
 
     validates :user, :password, :server, :datacenter, :presence => true
+    validates :display_type, :inclusion => {
+      :in => Proc.new { |cr| cr.class.supported_display_types.keys },
+      :message => N_('not supported by this compute resource')
+    }
 
     before_create :update_public_key
 
@@ -19,6 +29,13 @@ module Foreman::Model
 
     def self.model_name
       ComputeResource.model_name
+    end
+
+    def self.supported_display_types
+      {
+        'vnc' => _('VNC'),
+        'vmrc' => _('VMRC')
+      }
     end
 
     def user_data_supported?
@@ -37,11 +54,15 @@ module Foreman::Model
       if opts[:eager_loading] == true
         super()
       else
-        #VMware server loading is very slow
-        #not using FOG models directly to save the time
-        #and minimize the amount of time required (as we don't require all attributes by default when listing)
+        # VMware server loading is very slow
+        # not using FOG models directly to save the time
+        # and minimize the amount of time required (as we don't require all attributes by default when listing)
         FogExtensions::Vsphere::MiniServers.new(client, datacenter)
       end
+    end
+
+    def available_images
+      FogExtensions::Vsphere::MiniServers.new(client, datacenter, templates: true).all
     end
 
     def provided_attributes
@@ -78,51 +99,63 @@ module Foreman::Model
       dc_clusters.map(&:full_path).sort
     end
 
+    # Params:
+    # +name+ identifier of the datastore - its name unique in given vCenter
+    def datastore(name)
+      cache.cache(:"datastore-#{name}") do
+        dc.datastores.get(name)
+      end
+    end
+
+    # ==== Options
+    #
+    # * +:cluster_id+ - Limits the datastores in response to the ones available to defined cluster
     def datastores(opts = {})
-      if opts[:storage_domain]
-        cache.cache(:"datastores-#{opts[:storage_domain]}") do
-          name_sort(dc.datastores.get(opts[:storage_domain]))
-        end
-      else
-        cache.cache(:datastores) do
-          name_sort(dc.datastores.all(:accessible => true))
+      cache.cache(cachekey_with_cluster(:datastores, opts[:cluster_id])) do
+        name_sort(dc.datastores(cluster: opts[:cluster_id]).all(:accessible => true))
+      end
+    end
+
+    def storage_pod(name)
+      cache.cache(:"storage_pod-#{name}") do
+        begin
+          dc.storage_pods.get(name)
+        rescue RbVmomi::VIM::InvalidArgument
+          {} # Return an empty storage pod hash if vsphere does not support the feature
         end
       end
     end
 
+    ##
+    # Lists storage_pods for datastore/cluster.
+    # TODO: fog-vsphere doesn't support cluster base filtering, so the cluser_id is useless for now.
+    # ==== Options
+    #
+    # * +:cluster_id+ - Limits the datastores in response to the ones available to defined cluster
     def storage_pods(opts = {})
-      if opts[:storage_pod]
-        cache.cache(:"storage_pods-#{opts[:storage_pod]}") do
-          begin
-            dc.storage_pods.get(opts[:storage_pod])
-          rescue RbVmomi::VIM::InvalidArgument
-            {} # Return an empty storage pod hash if vsphere does not support the feature
-          end
-        end
-      else
-        cache.cache(:storage_pods) do
-          begin
-            name_sort(dc.storage_pods.all())
-          rescue RbVmomi::VIM::InvalidArgument
-            [] # Return an empty set of storage pods if vsphere does not support the feature
-          end
+      cache.cache(cachekey_with_cluster(:storage_pods, opts[:cluster_id])) do
+        begin
+          name_sort(dc.storage_pods.all(cluster: opts[:cluster_id]))
+        rescue RbVmomi::VIM::InvalidArgument
+          [] # Return an empty set of storage pods if vsphere does not support the feature
         end
       end
     end
 
-    def available_storage_pods(storage_pod = nil)
-      storage_pods({:storage_pod => storage_pod})
+    def available_storage_pods(cluster_id = nil)
+      storage_pods(cluster_id: cluster_id)
     end
 
     def folders
       cache.cache(:folders) do
-        dc.vm_folders.sort_by{|f| [f.path, f.name]}
+        dc.vm_folders.sort_by {|f| [f.path, f.name]}
       end
     end
 
     def networks(opts = {})
-      cache.cache(:networks) do
-        name_sort(dc.networks.all(:accessible => true))
+      cache_key = opts[:cluster_id].nil? ? :networks : :"networks-#{opts[:cluster_id]}"
+      cache.cache(cache_key) do
+        name_sort(dc.networks(cluster: opts[:cluster_id]).all(:accessible => true))
       end
     end
 
@@ -144,11 +177,15 @@ module Foreman::Model
     end
 
     def available_networks(cluster_id = nil)
-      networks
+      networks(cluster_id: cluster_id)
     end
 
-    def available_storage_domains(storage_domain = nil)
-      datastores({:storage_domain => storage_domain})
+    def storage_domain(storage_domain)
+      datastore(storage_domain)
+    end
+
+    def available_storage_domains(cluster_id = nil)
+      datastores(cluster_id: cluster_id)
     end
 
     def available_resource_pools(opts = {})
@@ -345,7 +382,7 @@ module Foreman::Model
 
     def guest_types
       types = { }
-      RbVmomi::VIM::VirtualMachineGuestOsIdentifier.values.compact.each do |v|
+      ::RbVmomi::VIM::VirtualMachineGuestOsIdentifier.values.compact.each do |v|
         types[v] = guest_types_descriptions.has_key?(v) ? guest_types_descriptions[v] : v
       end
       types
@@ -387,14 +424,6 @@ module Foreman::Model
         args[collection] = nested_attributes_for(collection, nested_attrs) if nested_attrs
       end
 
-      # Backwards compatibility for e.g. API requests.
-      # User can set the scsi_controller_type attribute
-      # to define a single scsi controller by that type
-      if args[:scsi_controller_type].present?
-        Foreman::Deprecation.deprecation_warning("1.18", _("SCSI controller type is deprecated. Please change to scsi_controllers"))
-        args[:scsi_controller] = {:type => args.delete(:scsi_controller_type)}
-      end
-
       add_cdrom = args.delete(:add_cdrom)
       args[:cdroms] = [new_cdrom] if add_cdrom == '1'
 
@@ -412,17 +441,18 @@ module Foreman::Model
     def parse_networks(args)
       args = args.deep_dup
       dc_networks = networks
-      args["interfaces_attributes"].each do |key, interface|
+      args["interfaces_attributes"]&.each do |key, interface|
         # Convert network id into name
         net = dc_networks.detect { |n| [n.id, n.name].include?(interface['network']) }
         raise "Unknown Network ID: #{interface['network']}" if net.nil?
         interface["network"] = net.name
         interface["virtualswitch"] = net.virtualswitch
-      end if args["interfaces_attributes"]
+      end
       args
     end
 
     def create_vm(args = { })
+      vm = nil
       test_connection
       return unless errors.empty?
 
@@ -435,9 +465,17 @@ module Foreman::Model
         vm.firmware = 'bios' if vm.firmware == 'automatic'
         vm.save
       end
+    rescue Fog::Compute::Vsphere::NotFound => e
+      Foreman::Logging.exception('Caught VMware error', e)
+      raise ::Foreman::WrappedException.new(
+        e,
+        N_(
+          'Foreman could not find a required vSphere resource. Check if Foreman has the required permissions and the resource exists. Reason: %s'
+        )
+      )
     rescue Fog::Errors::Error => e
       Foreman::Logging.exception("Unhandled VMware error", e)
-      destroy_vm vm.id if vm && vm.id
+      destroy_vm(vm.id) if vm&.id
       raise e
     end
 
@@ -450,11 +488,14 @@ module Foreman::Model
     def save_vm(uuid, attr)
       vm = find_vm_by_uuid(uuid)
       vm.attributes.merge!(attr.deep_symbolize_keys)
-      #volumes are not part of vm.attributes so we have to set them seperately if needed
+      # volumes are not part of vm.attributes so we have to set them seperately if needed
       if attr.has_key?(:volumes_attributes)
         vm.volumes.each do |vm_volume|
-          volume_attrs = attr[:volumes_attributes].values.detect {|vol| vol[:id] == vm_volume.id}
-          vm_volume.size_gb = volume_attrs[:size_gb]
+          volume_attrs = attr[:volumes_attributes].values.detect { |vol| vol[:id] == vm_volume.id }
+
+          next unless volume_attrs.present?
+
+          vm_volume.size_gb = volume_attrs[:size_gb] if volume_attrs[:size_gb].present?
         end
       end
       vm.save
@@ -486,26 +527,46 @@ module Foreman::Model
         "memoryMB" => args[:memory_mb],
         "datastore" => args[:volumes].first[:datastore],
         "storage_pod" => args[:volumes].first[:storage_pod],
-        "resource_pool" => [args[:cluster], args[:resource_pool]]
+        "resource_pool" => [args[:cluster], args[:resource_pool]],
+        "boot_order" => [:disk]
       }
 
-      opts['transform'] = args[:volumes].first[:thin] == 'true' ? 'sparse' : 'flat' unless args[:volumes].empty?
+      opts['transform'] = (args[:volumes].first[:thin] == 'true') ? 'sparse' : 'flat' unless args[:volumes].empty?
 
       vm_model = new_vm(raw_args)
       opts['interfaces'] = vm_model.interfaces
       opts['volumes'] = vm_model.volumes
-      opts["customization_spec"] = client.cloudinit_to_customspec(args[:user_data]) if args[:user_data]
+      if args[:user_data] && valid_cloudinit_for_customspec?(args[:user_data])
+        opts["customization_spec"] = client.cloudinit_to_customspec(args[:user_data])
+        opts["extraConfig"] = opts["customization_spec"]["extraConfig"] if opts["customization_spec"].key?("extraConfig")
+      end
       client.servers.get(client.vm_clone(opts)['new_vm']['id'])
     end
 
     def console(uuid)
       vm = find_vm_by_uuid(uuid)
-      raise "VM is not running!" unless vm.ready?
-      #TOOD port, password
-      #NOTE this requires the following port to be open on your ESXi FW
+      raise Foreman::Exception, N_('The console is not available because the VM is not powered on') unless vm.ready?
+
+      case display_type
+      when 'vmrc'
+        vmrc_console(vm)
+      else
+        vnc_console(vm)
+      end
+    end
+
+    def vnc_console(vm)
       values = { :port => unused_vnc_port(vm.hypervisor), :password => random_password, :enabled => true }
       vm.config_vnc(values)
       WsProxy.start(:host => vm.hypervisor, :host_port => values[:port], :password => values[:password]).merge(:type => 'vnc')
+    end
+
+    def vmrc_console(vm)
+      {
+        :name => vm.name,
+        :console_url => build_vmrc_uri(server, vm.mo_ref, client.connection.serviceContent.sessionManager.AcquireCloneTicket),
+        :type => 'vmrc'
+      }
     end
 
     def new_interface(attr = { })
@@ -536,6 +597,18 @@ module Foreman::Model
       associate_by("mac", vm.interfaces.map(&:mac))
     end
 
+    def display_type
+      attrs[:display] || 'vmrc'
+    end
+
+    def display_type=(type)
+      attrs[:display] = type.downcase
+    end
+
+    def humanized_display_type
+      self.class.supported_display_types[display_type]
+    end
+
     def self.provider_friendly_name
       "VMware"
     end
@@ -544,7 +617,7 @@ module Foreman::Model
       vm_attrs = super
       dc_networks = networks
       interfaces = vm.interfaces || []
-      vm_attrs[:interfaces_attributes] = interfaces.each_with_index.inject({}) do |hsh, (interface, index)|
+      vm_attrs[:interfaces_attributes] = interfaces.each_with_index.each_with_object({}) do |(interface, index), hsh|
         network = dc_networks.detect { |n| [n.id, n.name].include?(interface.network) }
         raise Foreman::Exception.new(N_("Could not find network %s on VMWare compute resource"), interface.network) unless network
         interface_attrs = {}
@@ -553,12 +626,75 @@ module Foreman::Model
         interface_attrs[:compute_attributes][:network] = network.name
         interface_attrs[:compute_attributes][:type] = interface.type.to_s.split('::').last
         hsh[index.to_s] = interface_attrs
-        hsh
       end
       vm_attrs[:scsi_controllers] = vm.scsi_controllers.map do |controller|
         controller.attributes
       end
       vm_attrs
+    end
+
+    def normalize_vm_attrs(vm_attrs)
+      normalized = slice_vm_attributes(vm_attrs, ['cpus', 'firmware', 'guest_id', 'annotation', 'resource_pool_id', 'image_id'])
+
+      normalized['cores_per_socket'] = vm_attrs['corespersocket']
+      normalized['memory'] = vm_attrs['memory_mb'].nil? ? nil : (vm_attrs['memory_mb'].to_i * 1024)
+
+      normalized['folder_path'] = vm_attrs['path']
+      normalized['folder_name'] = self.folders.detect { |f| f.path == normalized['folder_path'] }.try(:name)
+
+      normalized['cluster_id'] = self.available_clusters.detect { |c| c.name == vm_attrs['cluster'] }.try(:id)
+      normalized['cluster_name'] = vm_attrs['cluster']
+      normalized['cluster_name'] = nil if normalized['cluster_name'].empty?
+
+      if normalized['cluster_name']
+        normalized['resource_pool_id'] = self.resource_pools(:cluster_id => normalized['cluster_name']).detect { |p| p.name == vm_attrs['resource_pool'] }.try(:id)
+      end
+      normalized['resource_pool_name'] = vm_attrs['resource_pool']
+      normalized['resource_pool_name'] = nil if normalized['resource_pool_name'].empty?
+
+      normalized['guest_name'] = self.guest_types[vm_attrs['guest_id']]
+
+      normalized['hardware_version_id'] = vm_attrs['hardware_version']
+      normalized['hardware_version_name'] = vm_hw_versions[vm_attrs['hardware_version']]
+
+      normalized['memory_hot_add_enabled'] = to_bool(vm_attrs['memoryHotAddEnabled'])
+      normalized['cpu_hot_add_enabled'] = to_bool(vm_attrs['cpuHotAddEnabled'])
+      normalized['add_cdrom'] = to_bool(vm_attrs['add_cdrom'])
+
+      normalized['image_name'] = self.images.find_by(:uuid => vm_attrs['image_id']).try(:name)
+
+      scsi_controllers = vm_attrs['scsi_controllers'] || {}
+      normalized['scsi_controllers'] = scsi_controllers.map.with_index do |ctrl, idx|
+        ctrl['eager_zero'] = ctrl.delete('eagerzero')
+        [idx.to_s, ctrl]
+      end.to_h
+
+      stores = self.datastores
+      volumes_attributes = vm_attrs['volumes_attributes'] || {}
+      normalized['volumes_attributes'] = volumes_attributes.each_with_object({}) do |(key, vol), volumes|
+        volumes[key] = slice_vm_attributes(vol, ['name', 'mode'])
+
+        volumes[key]['controller_key'] = vol['controller_key']
+        volumes[key]['thin'] = to_bool(vol['thin'])
+        volumes[key]['size'] = memory_gb_to_bytes(vol['size_gb']).to_s
+        if vol['datastore'].empty?
+          volumes[key]['datastore_id'] = volumes[key]['datastore_name'] = nil
+        else
+          volumes[key]['datastore_name'] = vol['datastore']
+          volumes[key]['datastore_id'] = stores.detect { |s| s.name == vol['datastore'] }.try(:id)
+        end
+      end
+
+      interfaces_attributes = vm_attrs['interfaces_attributes'] || {}
+      normalized['interfaces_attributes'] = interfaces_attributes.inject({}) do |interfaces, (key, nic)|
+        interfaces.update(key => { 'type_id' => nic['type'],
+                                   'type_name' => nictypes[nic['type']],
+                                   'network_id' => nic['network'],
+                                   'network_name' => networks.detect { |n| n.id == nic['network'] }.try(:name)
+                                 })
+      end
+
+      normalized
     end
 
     private
@@ -585,7 +721,7 @@ module Foreman::Model
     rescue => e
       if e.message =~ /The remote system presented a public key with hash (\w+) but we're expecting a hash of/
         raise Foreman::FingerprintException.new(
-          N_("The remote system presented a public key with hash %s but we're expecting a different hash. If you are sure the remote system is authentic, go to the compute resource edit page, press the 'Test Connection' or 'Load Datacenters' button and submit"), $1)
+          N_("The remote system presented a public key with hash %s but we're expecting a different hash. If you are sure the remote system is authentic, go to the compute resource edit page, press the 'Test Connection' or 'Load Datacenters' button and submit"), Regexp.last_match(1))
       else
         raise e
       end
@@ -593,7 +729,7 @@ module Foreman::Model
 
     def unused_vnc_port(ip)
       10.times do
-        port   = 5901 + rand(64)
+        port   = rand(5901..5964)
         unused = (TCPSocket.connect(ip, port).close rescue true)
         return port if unused
       end
@@ -602,7 +738,7 @@ module Foreman::Model
 
     def vm_instance_defaults
       super.merge(
-        :memory_mb  => 768,
+        :memory_mb  => 2048,
         :interfaces => [new_interface],
         :volumes    => [new_volume],
         :scsi_controllers => [{ :type => scsi_controller_default_type }],
@@ -621,6 +757,31 @@ module Foreman::Model
       volumes = vm.volumes || []
       vm_attrs[:volumes_attributes] = Hash[volumes.each_with_index.map { |volume, idx| [idx.to_s, volume.attributes.merge(:size_gb => volume.size_gb)] }]
       vm_attrs
+    end
+
+    def build_vmrc_uri(host, vmid, ticket)
+      uri = URI::Generic.build(:scheme   => 'vmrc',
+                               :userinfo => "clone:#{ticket}",
+                               :host     => host,
+                               :port     => 443,
+                               :path     => '/',
+                               :query    => "moid=#{vmid}").to_s
+      # VMRC doesn't like brackets around IPv6 addresses
+      uri.sub(/(.*)\[/, '\1').sub(/(.*)\]/, '\1')
+    end
+
+    def valid_cloudinit_for_customspec?(cloudinit)
+      parsed = YAML.load(cloudinit)
+      return false if parsed.nil?
+      return true if parsed.is_a?(Hash)
+      raise Foreman::Exception.new('The user-data template must be a hash in YAML format for VM customization to work.')
+    rescue Psych::SyntaxError => e
+      Foreman::Logging.exception('Failed to parse user-data template', e)
+      raise Foreman::Exception.new('The user-data template must be valid YAML for VM customization to work.')
+    end
+
+    def cachekey_with_cluster(key, cluster_id = nil)
+      cluster_id.nil? ? key.to_sym : "#{key}-#{cluster_id}".to_sym
     end
   end
 end

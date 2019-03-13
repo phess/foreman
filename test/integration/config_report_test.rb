@@ -2,18 +2,7 @@ require 'integration_test_helper'
 
 class ConfigReportIntegrationTest < ActionDispatch::IntegrationTest
   def setup
-    @report = FactoryGirl.create(:report, :old_report)
-  end
-
-  test "index page" do
-    visit config_reports_path
-    assert find_button('Search').visible?, "Search button is not visible"
-  end
-
-  test "reports for host" do
-    visit config_reports_path
-    click_link(@report.host.fqdn)
-    assert_equal "host = #{@report.host.fqdn}", find_field('search').value
+    @report = FactoryBot.create(:report, :old_report)
   end
 
   test "show specific report" do
@@ -28,7 +17,7 @@ class ConfigReportIntegrationTest < ActionDispatch::IntegrationTest
   end
 
   test "adrift report displays warning" do
-    report = FactoryGirl.create(:report, :adrift)
+    report = FactoryBot.create(:report, :adrift)
     visit config_report_path(report)
     assert has_content?('Host times seem to be adrift!')
   end

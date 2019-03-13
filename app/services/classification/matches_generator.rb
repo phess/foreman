@@ -17,10 +17,12 @@ module Classification
         match = generate_match(rule)
         matches << match.join(LookupKey::KEY_DELM)
 
-        hostgroup_matches.each do |hostgroup_match|
-          match[match.index { |m| m =~ /hostgroup\s*=/ }]=hostgroup_match
-          matches << match.join(LookupKey::KEY_DELM)
-        end if add_hostgroup_matches?(rule)
+        if add_hostgroup_matches?(rule)
+          hostgroup_matches.each do |hostgroup_match|
+            match[match.index { |m| m =~ /hostgroup\s*=/ }] = hostgroup_match
+            matches << match.join(LookupKey::KEY_DELM)
+          end
+        end
       end
       matches
     end
@@ -68,7 +70,7 @@ module Classification
       if host.hostgroup
         path = host.hostgroup.to_label
         while path.include?("/")
-          path = path[0..path.rindex("/")-1]
+          path = path[0..path.rindex("/") - 1]
           matches << "hostgroup#{LookupKey::EQ_DELM}#{path}"
         end
       end
@@ -80,7 +82,7 @@ module Classification
     end
 
     def fact_value(fact_name)
-      FactValue.where(:host_id => host.id, :fact_name_id => fn.id).first.value
+      FactValue.where(:host_id => host.id, :fact_name_id => fact_name.id).first.value
     end
 
     def path_elements(path = nil)

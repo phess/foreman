@@ -32,6 +32,18 @@ module Menu
         @items || Menu::Loader.load
         @items[menu_name.to_sym] || Node.new(:root)
       end
+
+      def to_hash(menu_name)
+        items(menu_name).authorized_children.map(&:to_hash)
+      end
+
+      def get_resource_caption(resource)
+        items = (@items[:top_menu].children + @items[:admin_menu].children)
+        menu_title = items.map do |submenu|
+          submenu.children.find { |item| item.name == resource }&.caption
+        end.compact.first
+        menu_title || resource.to_s.pluralize.titleize
+      end
     end
 
     class Mapper
@@ -80,7 +92,7 @@ module Menu
       end
 
       def sub_menu(name, options = {}, &block)
-        push(Toggle.new(name, options[:caption]), options)
+        push(Toggle.new(name, options[:caption], options[:icon]), options)
         current = @parent
         @parent = name
         self.instance_eval(&block) if block_given?

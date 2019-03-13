@@ -1,25 +1,27 @@
+import $ from 'jquery';
+import 'select2';
+import * as tools from './foreman_tools';
+
 jest.unmock('./foreman_tools');
-const tools = require('./foreman_tools');
 
 describe('iconText', () => {
   it('creates a label with the right icon class', () => {
-    expect(tools.iconText('plus', '', 'patternfly'))
-    .toBe('<span class="patternfly patternfly-plus"/>');
+    expect(tools.iconText('plus', '', 'patternfly')).toBe(
+      '<span class="patternfly patternfly-plus"/>'
+    );
   });
 
   it('adds a bold text next to the label', () => {
-    expect(tools.iconText('plus', 'foo', 'patternfly'))
-    .toBe('<span class="patternfly patternfly-plus"/><strong>foo</strong>');
+    expect(tools.iconText('plus', 'foo', 'patternfly')).toBe(
+      '<span class="patternfly patternfly-plus"/><strong>foo</strong>'
+    );
   });
 });
 
 describe('activateDatatables', () => {
   it('calls $.fn.DataTable when it finds a data-table=server', () => {
-    const $ = require('jquery');
-
     // Used for rendering lists of VMs under compute resources
-    document.body.innerHTML =
-      `<div data-table=server data-source=http://example.foo>
+    document.body.innerHTML = `<div data-table=server data-source=http://example.foo>
       To be filled by a table
       </div>`;
     $.fn.DataTable = jest.fn();
@@ -29,16 +31,17 @@ describe('activateDatatables', () => {
       serverSide: true,
       ordering: false,
       ajax: $('[data-table=server]').data('source'),
-      dom: "<'row'<'col-md-6'f>r>t<'row'<'col-md-6'><'col-md-6'p>>"
+      language: {
+        searchPlaceholder: 'Filter...',
+      },
+      dom: "<'row'<'col-md-6'f>r>t<'row'<'col-md-6'><'col-md-6'p>>",
     });
   });
 });
 
 describe('activateTooltips', () => {
   it('calls $.fn.tooltip on all matching elements', () => {
-    const $ = require('jquery');
-    const elements =
-      `<div rel='twipsy'></div>
+    const elements = `<div rel='twipsy'></div>
       <div class='ellipsis'></div>
       <div title='test'></div>
       <div title='test' rel='popover'></div>`;
@@ -54,26 +57,27 @@ describe('deprecate', () => {
   it('Logs the correct deprecation message', () => {
     console.warn = jest.fn();
     tools.deprecate('oldtest', 'tfm.tools.newtest', '1.42');
-    expect(console.warn).toHaveBeenCalledWith('DEPRECATION WARNING: you are using deprecated oldtest, it will be removed in Foreman 1.42. Use tfm.tools.newtest instead.');
+    expect(console.warn).toHaveBeenCalledWith(
+      'DEPRECATION WARNING: you are using deprecated oldtest, it will be removed in Foreman 1.42. Use tfm.tools.newtest instead.'
+    );
   });
 });
 
 /* eslint-disable max-statements */
 describe('initTypeAheadSelect', () => {
   it('initializes select2 on given input field', () => {
-    const $ = require('jquery');
-
-    require('select2');
-
     document.body.innerHTML =
       '<input type="text" id="typeahead" data-url="testurl" data-scope="testscope">';
 
-    let field = $('#typeahead');
+    const field = $('#typeahead');
 
-    $.ajax = jest.fn((url) => {
-      let ajaxMock = $.Deferred();
+    $.ajax = jest.fn(url => {
+      const ajaxMock = $.Deferred();
 
-      ajaxMock.resolve([{'id': 1, 'name': 'testoption'}, {'id': 2, 'name': 'anotheroption'}]);
+      ajaxMock.resolve([
+        { id: 1, name: 'testoption' },
+        { id: 2, name: 'anotheroption' },
+      ]);
       return ajaxMock.promise();
     });
 
@@ -88,17 +92,12 @@ describe('initTypeAheadSelect', () => {
 describe('updateTableTest', () => {
   beforeEach(() => {
     global.Turbolinks = {
-      visit: jest.fn()
+      visit: jest.fn(),
     };
 
     global.tfm = {
-      tools: tools
+      tools,
     };
-
-    Object.defineProperty(window.location, 'href', {
-      writable: true,
-      value: 'http://localhost'
-    });
     document.body.innerHTML = `
 <div>
     <form id="search-form" onsubmit="return tfm.tools.updateTable(this);" action="/templates/provisioning_templates" accept-charset="UTF-8" method="get"><input name="utf8" type="hidden" value="✓">
@@ -114,13 +113,13 @@ describe('updateTableTest', () => {
       <ul class="dropdown-menu pull-right">
         <li class="divider"></li>
         <li><a id="bookmark" data-url="/bookmarks/new?kontroller=provisioning_templates" href="#" onclick="$('#bookmarks-modal').modal();; return false;">Bookmark this search</a></li>
-        <li><a rel="external" target="_blank" data-id="aid_manuals_1.16_index.html" href="http://www.theforeman.org/manuals/1.16/index.html#4.1.5Searching"><span class="glyphicon glyphicon-question-sign icon-black"></span> Documentation</a></li>
+        <li><a rel="external noopener noreferrer" target="_blank" data-id="aid_manuals_1.16_index.html" href="http://www.theforeman.org/manuals/1.16/index.html#4.1.5Searching"><span class="glyphicon glyphicon-question-sign icon-black"></span> Documentation</a></li>
       </ul>
     </span>
   </div>
 </form>
 <table></table>
-<form class="content-view-pf-pagination table-view-pf-pagination paginate" id="pagination" data-count="7" data-per-page="7">
+<form onsubmit="return tfm.tools.updateTable(this);" class="content-view-pf-pagination table-view-pf-pagination paginate" id="pagination" data-count="7" data-per-page="7">
   <div class="form-group">
     <select name="per_page" id="per_page" label="per page" onchange="tfm.tools.updateTable(this)" class="pagination-pf-pagesize without_select2 per-page"><option selected="selected" value="5">5</option>
 <option value="10">10</option>
@@ -148,30 +147,73 @@ describe('updateTableTest', () => {
     `;
   });
 
-  it('should use turoblinks', () => {
-    tools.updateTable();
-    expect(global.Turbolinks.visit).toBeCalled();
-  });
-
-  it('should use find search term and add it to the url considering per page value and pagination', () => {
-    let PerPage = $('#per_page').val();
-
-    $('form').submit();
-    expect(global.Turbolinks.visit).toHaveBeenLastCalledWith(`http://localhost/?search=name+%3D+y&per_page=${PerPage}&page=1`);
-  });
-
   it('should use selected per page value and add it to the url considering search term and pagination', () => {
-    let PerPage = $('#per_page').val();
+    const PerPage = $('#pagination-row-dropdown')
+      .text()
+      .trim();
 
-    $('#per_page').change();
-    expect(global.Turbolinks.visit).toHaveBeenLastCalledWith(`http://localhost/?search=name+%3D+y&per_page=${PerPage}&page=1`);
+    $('#search-form').submit();
+    expect(global.Turbolinks.visit).toHaveBeenLastCalledWith(
+      `http://localhost/?page=1&search=name+%3D+y&per_page=${PerPage}`
+    );
   });
 
   it('should change page', () => {
-    let PerPage = $('#per_page').val();
+    const PerPage = $('#pagination-row-dropdown')
+      .text()
+      .trim();
 
     $('#cur_page_num').val('4');
-    $('form').submit();
-    expect(global.Turbolinks.visit).toHaveBeenLastCalledWith(`http://localhost/?search=name+%3D+y&per_page=${PerPage}&page=4`);
+    $('#pagination').submit();
+    expect(global.Turbolinks.visit).toHaveBeenLastCalledWith(
+      `http://localhost/?page=4&per_page=${PerPage}`
+    );
+  });
+
+  it('should use find search term and add it to the url considering per page value and pagination', () => {
+    const PerPage = $('#pagination-row-dropdown')
+      .text()
+      .trim();
+    $('#search-form').submit();
+    expect(global.Turbolinks.visit).toHaveBeenLastCalledWith(
+      `http://localhost/?page=1&search=name+%3D+y&per_page=${PerPage}`
+    );
+  });
+
+  it('should reset page param to 1 after new search', () => {
+    const PerPage = $('#pagination-row-dropdown')
+      .text()
+      .trim();
+
+    window.history.pushState({}, 'Test Title', '/?page=4');
+    $('.autocomplete-input').val('test');
+    $('#search-form').submit();
+    expect(global.Turbolinks.visit).toHaveBeenLastCalledWith(
+      `http://localhost/?page=1&search=test&per_page=${PerPage}`
+    );
+  });
+
+  it('should remove search param if search is empty', () => {
+    ['', ' '].map(searchValue => {
+      const PerPage = $('#pagination-row-dropdown')
+        .text()
+        .trim();
+      $('.autocomplete-input').val(searchValue);
+      $('#search-form').submit();
+      return expect(global.Turbolinks.visit).toHaveBeenLastCalledWith(
+        `http://localhost/?page=1&search=&per_page=${PerPage}`
+      );
+    });
+  });
+
+  it('deprecateObjectProperty should depracte an object property', () => {
+    const obj = { deprecated: jest.fn() };
+    console.warn = jest.fn();
+
+    tools.deprecateObjectProperty(obj, 'deprecated', 'tfm.obj', '1.42');
+    obj.deprecated();
+    expect(console.warn).toHaveBeenCalledWith(
+      'DEPRECATION WARNING: you are using deprecated deprecated, it will be removed in Foreman 1.42. Use tfm.obj instead.'
+    );
   });
 });

@@ -7,8 +7,9 @@ class Taxonomy < ApplicationRecord
 
   serialize :ignore_types, Array
 
-  belongs_to :user
+  before_create :assign_default_templates
   after_create :assign_taxonomy_to_user
+  before_validation :sanitize_ignored_types
 
   has_many :taxable_taxonomies, :dependent => :destroy
   has_many :users, :through => :taxable_taxonomies, :source => :taxable, :source_type => 'User'
@@ -17,18 +18,21 @@ class Taxonomy < ApplicationRecord
   has_many :media, :through => :taxable_taxonomies, :source => :taxable, :source_type => 'Medium'
   has_many :provisioning_templates, -> { where(:type => 'ProvisioningTemplate') }, :through => :taxable_taxonomies, :source => :taxable, :source_type => 'ProvisioningTemplate'
   has_many :ptables, -> { where(:type => 'Ptable') }, :through => :taxable_taxonomies, :source => :taxable, :source_type => 'Ptable'
+  has_many :report_templates, -> { where(:type => 'ReportTemplate') }, :through => :taxable_taxonomies, :source => :taxable, :source_type => 'ReportTemplate'
   has_many :domains, :through => :taxable_taxonomies, :source => :taxable, :source_type => 'Domain'
   has_many :realms, :through => :taxable_taxonomies, :source => :taxable, :source_type => 'Realm'
   has_many :hostgroups, :through => :taxable_taxonomies, :source => :taxable, :source_type => 'Hostgroup'
   has_many :environments, :through => :taxable_taxonomies, :source => :taxable, :source_type => 'Environment'
   has_many :subnets, :through => :taxable_taxonomies, :source => :taxable, :source_type => 'Subnet'
+  has_many :auth_sources, :through => :taxable_taxonomies, :source => :taxable, :source_type => 'AuthSource'
+
+  has_many :puppetclasses, :through => :environments
 
   validate :check_for_orphans, :unless => Proc.new {|t| t.new_record?}
-
+  # the condition for parent_id != 0 is required because of our tests, should validate macros fill in attribute with values and it set 0 to this one
+  # which would lead to an error when we ask for parent object
+  validate :parent_id_does_not_escalate, :if => Proc.new { |t| t.ancestry_changed? && t.parent_id != 0 && t.parent.present? }
   validates :name, :presence => true, :uniqueness => {:scope => [:ancestry, :type], :case_sensitive => false}
-
-  before_validation :sanitize_ignored_types
-  after_create :assign_default_templates
 
   def self.inherited(child)
     child.instance_eval do
@@ -44,7 +48,7 @@ class Taxonomy < ApplicationRecord
 
   default_scope -> { order(:title) }
 
-  scope :completer_scope, lambda{|opts|
+  scope :completer_scope, lambda {|opts|
     if opts[:controller] == 'organizations'
       Organization.completer_scope opts
     elsif opts[:controller] == 'locations'
@@ -53,11 +57,13 @@ class Taxonomy < ApplicationRecord
   }
 
   def self.locations_enabled
-    enabled?(:location)
+    Foreman::Deprecation.deprecation_warning('1.23', 'Taxonomy.locations_enabled is always true, settings to disable taxonomies has been removed in 1.21.')
+    true
   end
 
   def self.organizations_enabled
-    enabled?(:organization)
+    Foreman::Deprecation.deprecation_warning('1.23', 'Taxonomy.organizations_enabled is always true, settings to disable taxonomies has been removed in 1.21.')
+    true
   end
 
   def self.no_taxonomy_scope
@@ -75,18 +81,14 @@ class Taxonomy < ApplicationRecord
   end
 
   def self.enabled?(taxonomy)
-    case taxonomy
-      when :organization
-        SETTINGS[:organizations_enabled]
-      when :location
-        SETTINGS[:locations_enabled]
-      else
-        raise ArgumentError, "unknown taxonomy #{taxonomy}"
-    end
+    Foreman::Deprecation.deprecation_warning('1.23', 'Taxonomy.enabled? is always true, settings to disable taxonomies has been removed in 1.21.')
+    true
   end
 
   def self.enabled_taxonomies
-    %w(locations organizations).select { |taxonomy| SETTINGS["#{taxonomy}_enabled".to_sym] }
+    Foreman::Deprecation.deprecation_warning('1.23', 'Taxonomy.enabled_taxonomies is always locations and organizations, settings to disable taxonomies has been removed in 1.21.')
+    true
+    %w(locations organizations)
   end
 
   def self.ignore?(taxable_type)
@@ -126,7 +128,7 @@ class Taxonomy < ApplicationRecord
   end
 
   def self.all_import_missing_ids
-    all.each do |taxonomy|
+    all.find_each do |taxonomy|
       taxonomy.import_missing_ids
     end
   end
@@ -144,16 +146,19 @@ class Taxonomy < ApplicationRecord
     new.subnets           = subnets
     new.compute_resources = compute_resources
     new.provisioning_templates = provisioning_templates
+    new.ptables = ptables
+    new.report_templates = report_templates
     new.media             = media
     new.domains           = domains
     new.realms            = realms
     new.media             = media
     new.hostgroups        = hostgroups
+    new.auth_sources      = auth_sources
     new
   end
 
-  # overwrite *_ids since need to check if ignored? - don't overwrite location_ids and organizations_ids since these aren't ignored
-  (TaxHost::HASH_KEYS - [:location_ids, :organizations_ids]).each do |key|
+  # overwrite *_ids since need to check if ignored? - don't overwrite location_ids and organization_ids since these aren't ignored
+  (TaxHost::HASH_KEYS - [:location_ids, :organization_ids]).each do |key|
     # def domain_ids
     #  if ignore?("Domain")
     #   Domain.pluck(:id)
@@ -172,14 +177,16 @@ class Taxonomy < ApplicationRecord
   end
 
   def expire_topbar_cache
-    (users+User.only_admin).each { |u| u.expire_topbar_cache }
+    (users + User.only_admin).each { |u| u.expire_topbar_cache }
   end
 
   def parent_params(include_source = false)
     hash = {}
     elements = parents_with_params
     elements.each do |el|
-      el.send("#{type.downcase}_parameters".to_sym).authorized(:view_params).each {|p| hash[p.name] = include_source ? {:value => p.value, :source => sti_name, :safe_value => p.safe_value, :source_name => el.title} : p.value }
+      el.send("#{type.downcase}_parameters".to_sym).authorized(:view_params).each do |p|
+        hash[p.name] = include_source ? p.hash_for_include_source(sti_name, el.title) : p.value
+      end
     end
     hash
   end
@@ -187,7 +194,9 @@ class Taxonomy < ApplicationRecord
   # returns self and parent parameters as a hash
   def parameters(include_source = false)
     hash = parent_params(include_source)
-    self.send("#{type.downcase}_parameters".to_sym).authorized(:view_params).each {|p| hash[p.name] = include_source ? {:value => p.value, :source => sti_name, :safe_value => p.safe_value, :source_name => el.title} : p.value }
+    self.send("#{type.downcase}_parameters".to_sym).authorized(:view_params).each do |p|
+      hash[p.name] = include_source ? p.hash_for_include_source(sti_name, el.title) : p.value
+    end
     hash
   end
 
@@ -214,14 +223,22 @@ class Taxonomy < ApplicationRecord
     self.subtree.flat_map(&:users).map(&:id).uniq
   end
 
+  # note - this method used by before_destroy callbacks in extension files from plugins
+  # audits for 'destroy' action on resources lead to taxable_taxonomies records.
+  # This will check if any taxable_taxonomies records present and apply destroy_all
+  # so that it nullifies all associated audit records
+  def destroy_taxable_taxonomies
+    TaxableTaxonomy.where(taxonomy_id: self.id).destroy_all
+  end
+
   private
 
   delegate :need_to_be_selected_ids, :selected_ids, :used_and_selected_ids, :mismatches, :missing_ids, :check_for_orphans,
            :to => :tax_host
 
   def assign_default_templates
-    Template.where(:default => true).each do |template|
-      self.send((template.class.to_s.underscore.pluralize).to_s) << template
+    Template.where(:default => true).group_by { |t| t.class.to_s.underscore.pluralize }.each do |association, templates|
+      self.send("#{association}=", self.send(association) + templates)
     end
   end
 
@@ -241,5 +258,12 @@ class Taxonomy < ApplicationRecord
   def assign_taxonomy_to_user
     return if User.current.nil? || User.current.admin
     TaxableTaxonomy.create(:taxonomy_id => self.id, :taxable_id => User.current.id, :taxable_type => 'User')
+  end
+
+  def parent_id_does_not_escalate
+    unless User.current.can?("edit_#{self.class.to_s.underscore.pluralize}", self.parent)
+      errors.add :parent_id, _("Missing a permission to edit parent %s") % self.class.to_s
+      false
+    end
   end
 end

@@ -7,8 +7,8 @@ module Api
 
       before_action :find_override_values
       before_action :find_override_value, :only => [:show, :update, :destroy]
-      # override return_if_smart_mismatch in LookupKeysCommonController to add :index, :create
-      before_action :return_if_smart_mismatch, :only => [:index, :create, :show, :update, :destroy]
+      # override return_if_smart_mismatch in LookupKeysCommonController to add :create
+      before_action :return_if_smart_mismatch, :only => [:create, :show, :update, :destroy]
       before_action :return_if_override_mismatch, :only => [:show, :update, :destroy]
 
       before_action :rename_use_puppet_default, :only => [:create, :update]
@@ -37,7 +37,7 @@ module Api
       def_param_group :override_value do
         param :override_value, Hash, :required => true, :action_aware => true do
           param :match, String, :required => true, :desc => N_("Override match")
-          param :value, LookupKey::KEY_TYPES, :required => false, :desc => N_("Override value, required if omit is false")
+          param :value, :any_type, :of => LookupKey::KEY_TYPES, :required => false, :desc => N_("Override value, required if omit is false")
           param :use_puppet_default, :bool, :required => false, :desc => N_("Deprecated, please use omit")
           param :omit, :bool, :required => false, :desc => N_("Foreman will not send this parameter in classification output, replaces use_puppet_default")
         end
@@ -62,7 +62,7 @@ module Api
       param_group :override_value
 
       def update
-        @override_value.update_attributes!(lookup_value_params)
+        @override_value.update!(lookup_value_params)
         render 'api/v2/override_values/show'
       end
 
@@ -88,6 +88,9 @@ module Api
 
       def find_override_value
         @override_value = LookupValue.find_by_id(params[:id])
+        if @smart
+          @override_value ||= @smart.lookup_values.friendly.find(params[:id])
+        end
       end
 
       def return_if_override_mismatch
@@ -102,7 +105,7 @@ module Api
       end
 
       def rename_use_puppet_default
-        return unless params[:override_value] && params[:override_value].key?(:use_puppet_default)
+        return unless params[:override_value]&.key?(:use_puppet_default)
 
         params[:override_value][:omit] = params[:override_value].delete(:use_puppet_default)
         Foreman::Deprecation.api_deprecation_warning('"use_puppet_default" was renamed to "omit"')

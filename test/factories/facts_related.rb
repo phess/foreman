@@ -1,4 +1,4 @@
-FactoryGirl.define do
+FactoryBot.define do
   factory :fact_name do
     sequence(:name) {|n| "fact#{n}" }
   end
@@ -10,7 +10,7 @@ FactoryGirl.define do
   end
 
   factory :fact_name_other, :class => FactName do
-    type 'FactNameOther'
+    type { 'FactNameOther' }
     sequence(:name) {|n| "fact#{n}" }
   end
 end

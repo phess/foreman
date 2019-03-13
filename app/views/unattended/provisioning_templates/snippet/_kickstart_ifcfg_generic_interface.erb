@@ -1,5 +1,6 @@
 <%#
 name: kickstart_ifcfg_generic_interface
+model: ProvisioningTemplate
 snippet: true
 model: ProvisioningTemplate
 kind: snippet
@@ -23,6 +24,9 @@ BOOTPROTO="<%= @dhcp ? 'dhcp' : 'none' -%>"
 <%-   end -%>
 <%=   "IPV6_PEERDNS=no" %>
 <%- end -%>
+<%- if @interface.domain -%>
+DOMAIN="<%= @interface.domain %>"
+<%- end -%>
 DEVICE=$real
 <%- unless @interface.virtual? -%>
 <%=   "HWADDR=\"#{@interface.mac}\"" %>
@@ -40,8 +44,23 @@ DEFROUTE=<%= primary %>
 <%-     end -%>
 <%-   end -%>
 <%- end -%>
-<%- if @interface.virtual? && ((!@subnet.nil? && @subnet.has_vlanid?) || @interface.vlanid.present?) -%>
+<%- if @interface.virtual? && (!@subnet.nil? && (@subnet.has_vlanid? || @interface.vlanid.present?)) -%>
 <%=   "VLAN=yes" %>
+<%-   if @attached_to_bond -%>
+<%=     "NM_CONTROLLED=no" %>
+<%-   end -%>
+<%-   if @interface.identifier.match(/^vlan\d+/) -%>
+<%=     "VLAN_NAME_TYPE=VLAN_PLUS_VID_NO_PAD" %>
+<%=     "PHYSDEV=#{@interface.attached_to}" %>
+<%-     if @bonding_interfaces.include?(@interface.attached_to) -%>
+<%=       "TYPE=bonding" %>
+<%-     end -%>
+<%-   end -%>
 <%- elsif @interface.virtual? && !@subnet.nil? && !@subnet.has_vlanid? && @interface.identifier.include?(':') -%>
 <%=   "TYPE=Alias" %>
+<%- end -%>
+<%- if @subnet -%>
+<%=   "MTU=#{@subnet.mtu}" %>
+<%- elsif @subnet6 -%>
+<%=   "MTU=#{@subnet6.mtu}" %>
 <%- end -%>

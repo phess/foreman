@@ -1,4 +1,4 @@
-class CreateHostStatus < ActiveRecord::Migration
+class CreateHostStatus < ActiveRecord::Migration[4.2]
   def up
     create_table :host_status do |t|
       t.string :type, :limit => 255
@@ -69,7 +69,7 @@ class CreateHostStatus < ActiveRecord::Migration
   def update_sub_status(status)
     if status.relevant?
       status.refresh!
-      return true
+      true
     end
   rescue => e
     # if the status is not ready to be saved because of missing migration

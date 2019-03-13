@@ -97,23 +97,25 @@ function cleanHostsSelection() {
 
 function multiple_selection() {
   var total = $("#pagination").data("count");
-  var alert_text = Jed.sprintf(n__("Single host is selected in total",
-                                   "All <b> %d </b> hosts are selected.", total), total);
+  var alert_text = tfm.i18n.sprintf(n__("Single host is selected in total",
+    "All <b> %d </b> hosts are selected.", total), total);
   var undo_text = __("Undo selection");
   var multiple_alert = $("#multiple-alert");
   multiple_alert.find(".text").html(alert_text + ' <a href="#" onclick="undo_multiple_selection();">' + undo_text + '</a>');
-  multiple_alert.data('multiple', true)
+  multiple_alert.data('multiple', true);
+  $(".select_count").html(total);
 }
 
 function undo_multiple_selection() {
   var pagination = pagination_metadata();
-  var alert_text = Jed.sprintf(n__("Single host on this page is selected.",
-                                   "All %s hosts on this page are selected.", pagination.per_page), pagination.per_page);
-  var select_text = Jed.sprintf(n__("Select this host",
-                                    "Select all<b> %s </b> hosts", pagination.total), pagination.total);
+  var alert_text = tfm.i18n.sprintf(n__("Single host on this page is selected.",
+    "All %s hosts on this page are selected.", pagination.per_page), pagination.per_page);
+  var select_text = tfm.i18n.sprintf(n__("Select this host",
+    "Select all<b> %s </b> hosts", pagination.total), pagination.total);
   var multiple_alert = $("#multiple-alert");
   multiple_alert.find(".text").html( alert_text + ' <a href="#" onclick="multiple_selection();">' + select_text + '</a>');
-  multiple_alert.data('multiple', false)
+  multiple_alert.data('multiple', false);
+  $(".select_count").html(pagination.per_page);
 }
 
 function toggleCheck() {
@@ -154,44 +156,49 @@ $(function() {
 function submit_modal_form() {
   if (!$('#keep_selected').is(':checked'))
     removeForemanHostsCookie();
-  if ($("#multiple-alert").data('multiple')){
+  if (is_multiple()){
     var query = $("<input>")
-            .attr("type", "hidden")
-            .attr("name", "search").val($("#search").val());
+      .attr("type", "hidden")
+      .attr("name", "search").val($("#search").val());
     $("#confirmation-modal form").append(query);
   }
   $("#confirmation-modal form").submit();
   $('#confirmation-modal').modal('hide');
 }
 
+function is_multiple() {
+  return $("#multiple-alert").data('multiple');
+}
+
+function get_bulk_param() {
+  return is_multiple() ? {search: $("#search").val()} : {host_ids: $.foremanSelectedHosts}
+}
+
 function build_modal(element, url) {
-  var is_multiple = $("#multiple-alert");
-  if (is_multiple.data('multiple'))
-    var data = {search: $("#search").val()};
-  else
-    var data = {host_ids: $.foremanSelectedHosts};
+  var data = get_bulk_param();
   var title = $(element).attr('data-dialog-title');
   $('#confirmation-modal .modal-header h4').text(title);
   $('#confirmation-modal .modal-body').empty()
     .append("<div class='modal-spinner spinner spinner-lg'></div>");
   $('#confirmation-modal').modal();
   $("#confirmation-modal .modal-body").load(url + " #content", data,
-      function(response, status, xhr) {
-        $("#loading").hide();
-        $('#submit_multiple').val('');
-        if (is_multiple.data('multiple'))
-          $("#multiple-modal-alert").show();
-        var b = $("#confirmation-modal .btn-primary");
-        if ($(response).find('#content form select').length > 0)
-          b.addClass("disabled").attr("disabled", true);
-        else
-          b.removeClass("disabled").attr("disabled", false);
-      });
+    function(response, status, xhr) {
+      $("#loading").hide();
+      $('#submit_multiple').val('');
+      if (is_multiple())
+        $("#multiple-modal-alert").show();
+      var b = $("#confirmation-modal .btn-primary");
+      if ($(response).find('#content form select').length > 0)
+        b.addClass("disabled").attr("disabled", true);
+      else
+        b.removeClass("disabled").attr("disabled", false);
+    });
   return false;
 }
 
 function build_redirect(url) {
-  var url = url + "?" + $.param({host_ids: $.foremanSelectedHosts});
+  var data = get_bulk_param();
+  var url = url + "?" + $.param(data);
   window.location.replace(url);
 }
 
@@ -207,12 +214,14 @@ function update_counter() {
   if ($.foremanSelectedHosts)
     $(".select_count").text($.foremanSelectedHosts.length);
   var title = "";
-  if (item.attr("checked"))
-    title = $.foremanSelectedHosts.length + " - " + item.attr("uncheck-title");
+  if (item.prop('checked') && $.foremanSelectedHosts)
+    title = $.foremanSelectedHosts.length+ " - " + item.attr("uncheck-title");
   else
     title = item.attr("check-title");
 
   item.attr("data-original-title", title );
-  item.tooltip();
+  item.tooltip({
+    trigger : 'hover'
+  })
   return false;
 }

@@ -1,4 +1,3 @@
-# encoding: utf-8
 require 'test_helper'
 
 class OperatingsystemTest < ActiveSupport::TestCase
@@ -15,33 +14,33 @@ class OperatingsystemTest < ActiveSupport::TestCase
   should validate_numericality_of(:major).is_greater_than_or_equal_to(0)
   should validate_numericality_of(:minor).is_greater_than_or_equal_to(0)
 
-  should allow_value('a' * 255).for(:name)
-  should_not allow_value('a' * 256).for(:name)
+  should allow_value(*valid_name_list).for(:name)
+  should_not allow_value(*invalid_name_list).for(:name)
 
   should allow_value('1' * 5).for(:major)
-  should_not allow_value('1' * 6).for(:major)
-  should_not allow_value(-33).for(:major)
+  should_not allow_values('1' * 6, '', -33).for(:major)
 
   should allow_value('1' * 16).for(:minor)
-  should_not allow_value('1' * 17).for(:minor)
-  should_not allow_value(-50).for(:minor)
+  should_not allow_values('1' * 17, -50).for(:minor)
+
+  should allow_values('Base64', 'SHA256', 'SHA512').for(:password_hash)
+  should_not allow_value('INVALID_HASH').for(:password_hash)
 
   should validate_length_of(:description).is_at_most(255)
+  should allow_value(*valid_name_list).for(:description)
 
-  #TODO: this test should be uncommented after validation is implemented
-  # test "name and major should be unique" do
-  #   operating_system = Operatingsystem.new :name => "Ubuntu", :major => "10"
-  #   assert operating_system.save
-
-  #   other_operating_system = Operatingsystem.new :name => "Ubuntu", :major => "10"
-  #   assert !other_operating_system.save
-  # end
+  test "name and major should be unique" do
+    operating_system = FactoryBot.build(:operatingsystem, :name => "Ubuntu", :major => "10", :release_name => "rn10")
+    assert operating_system.save
+    other_operating_system = FactoryBot.build(:operatingsystem, :name => "Ubuntu", :major => "10", :release_name => "rn10")
+    refute_valid other_operating_system
+  end
 
   test "should not destroy while using" do
-    operating_system = Operatingsystem.new :name => "Ubuntu", :major => "10"
+    operating_system = Operatingsystem.new :name => "Ubuntu", :major => "10", :release_name => "rn10"
     assert operating_system.save
 
-    host = FactoryGirl.create(:host)
+    host = FactoryBot.create(:host)
     host.operatingsystem = operating_system
     host.save(:validate => false)
 
@@ -50,12 +49,12 @@ class OperatingsystemTest < ActiveSupport::TestCase
 
   # Methods tests
   test "to_label should print correctly" do
-    operating_system = Operatingsystem.new :name => "Ubuntu", :major => "9", :minor => "10"
+    operating_system = Operatingsystem.new :name => "Ubuntu", :major => "9", :minor => "10", :release_name => "rn9"
     assert operating_system.to_label == "Ubuntu 9.10"
   end
 
   test "to_s retrives label" do
-    operating_system = Operatingsystem.new :name => "Ubuntu", :major => "9", :minor => "10"
+    operating_system = Operatingsystem.new :name => "Ubuntu", :major => "9", :minor => "10", :release_name => "rn9"
     assert operating_system.to_s == operating_system.to_label
   end
 
@@ -73,7 +72,7 @@ class OperatingsystemTest < ActiveSupport::TestCase
 
   test "should set description by setting to_label" do
     os = operatingsystems(:centos5_3)
-    os.update_attributes(:to_label => "CENTOS 5.3")
+    os.update(:to_label => "CENTOS 5.3")
     assert_equal os.description, os.to_label
   end
 
@@ -121,8 +120,11 @@ class OperatingsystemTest < ActiveSupport::TestCase
     let(:os) { Operatingsystem.new :name => "dummy", :major => 7 }
 
     test "os family can be one of defined os families" do
-      os.family = Operatingsystem.families[0]
-      assert os.valid?
+      Operatingsystem.families.each do |family|
+        os.release_name = "nicereleasename" if (family == 'Debian')
+        os.family = family
+        assert_valid os
+      end
     end
 
     test "os family can't be anything else than defined os families" do
@@ -159,8 +161,8 @@ class OperatingsystemTest < ActiveSupport::TestCase
 
     test "families_as_collection contains correct names and values" do
       families = Operatingsystem.families_as_collection
-      assert_equal ["AIX", "Altlinux", "Arch Linux", "CoreOS", "Debian", "FreeBSD", "Gentoo", "Junos", "NX-OS", "Red Hat", "SUSE", "Solaris", "Windows", "XenServer"], families.map(&:name).sort
-      assert_equal ["AIX", "Altlinux", "Archlinux", "Coreos", "Debian", "Freebsd", "Gentoo", "Junos", "NXOS", "Redhat", "Solaris", "Suse", "Windows", "Xenserver"], families.map(&:value).sort
+      assert_equal ["AIX", "Altlinux", "Arch Linux", "CoreOS", "Debian", "FreeBSD", "Gentoo", "Junos", "NX-OS", 'RancherOS', "Red Hat", "SUSE", "Solaris", "VRP", "Windows", "XenServer"], families.map(&:name).sort
+      assert_equal ["AIX", "Altlinux", "Archlinux", "Coreos", "Debian", "Freebsd", "Gentoo", "Junos", "NXOS", 'Rancheros', "Redhat", "Solaris", "Suse", "VRP", "Windows", "Xenserver"], families.map(&:value).sort
     end
   end
 
@@ -195,7 +197,7 @@ class OperatingsystemTest < ActiveSupport::TestCase
   end
 
   test "release name is changed to lower case on save" do
-    os = FactoryGirl.build(:operatingsystem, release_name: 'TEST')
+    os = FactoryBot.build(:operatingsystem, release_name: 'TEST')
     os.save!
     assert_equal 'test', os.release_name
   end
@@ -208,25 +210,25 @@ class OperatingsystemTest < ActiveSupport::TestCase
 
   test "should create os with two different parameters" do
     pid = Time.now.to_i
-    operatingsystem = FactoryGirl.build(:operatingsystem, :os_parameters_attributes =>
-        {pid += 1=>{"name"=>"a", "value"=>"1"},
-         pid +  1=>{"name"=>"b", "value"=>"1"}})
+    operatingsystem = FactoryBot.build_stubbed(:operatingsystem, :os_parameters_attributes =>
+        {pid += 1 => {"name" => "a", "value" => "1"},
+         pid +  1 => {"name" => "b", "value" => "1"}})
     assert_valid operatingsystem
   end
 
   test "should not create os with two new parameters with the same name" do
     pid = Time.now.to_i
-    operatingsystem = FactoryGirl.build(:operatingsystem, :os_parameters_attributes =>
-        {pid += 1=>{"name"=>"a", "value"=>"1"},
-         pid += 1=>{"name"=>"a", "value"=>"2"},
-         pid +  1=>{"name"=>"b", "value"=>"1"}})
+    operatingsystem = FactoryBot.build_stubbed(:operatingsystem, :os_parameters_attributes =>
+        {pid += 1 => {"name" => "a", "value" => "1"},
+         pid += 1 => {"name" => "a", "value" => "2"},
+         pid +  1 => {"name" => "b", "value" => "1"}})
     refute_valid operatingsystem
-    assert_equal "has already been taken", operatingsystem.os_parameters.select {|param| param.name=='a'}.sort[1].errors[:name].first
+    assert_equal "has already been taken", operatingsystem.os_parameters.select {|param| param.name == 'a'}.sort[1].errors[:name].first
     assert_equal "Please ensure the following parameters name are unique", operatingsystem.errors[:os_parameters].first
   end
 
   test "should not create os with a new parameter with the same name as a existing parameter" do
-    operatingsystem = FactoryGirl.create(:operatingsystem)
+    operatingsystem = FactoryBot.create(:operatingsystem)
     operatingsystem.os_parameters = [OsParameter.new({:name => "a", :value => "3"})]
     assert operatingsystem.valid?
     operatingsystem.os_parameters.push(OsParameter.new({:name => "a", :value => "43"}))
@@ -235,10 +237,10 @@ class OperatingsystemTest < ActiveSupport::TestCase
 
   test "should not create os with an invalid parameter - no name" do
     pid = Time.now.to_i
-    operatingsystem = FactoryGirl.build(:operatingsystem, :os_parameters_attributes =>
-        {pid += 1=>{"value"=>"1"},
-         pid += 1=>{"name"=>"a", "value"=>"2"},
-         pid +  1=>{"name"=>"b", "value"=>"1"}})
+    operatingsystem = FactoryBot.build_stubbed(:operatingsystem, :os_parameters_attributes =>
+        {pid += 1 => {"value" => "1"},
+         pid += 1 => {"name" => "a", "value" => "2"},
+         pid +  1 => {"name" => "b", "value" => "1"}})
     refute_valid operatingsystem
   end
 
@@ -266,21 +268,32 @@ class OperatingsystemTest < ActiveSupport::TestCase
   end
 
   test "should have preferred pxe loader for OS with PXELinux template" do
-    os = FactoryGirl.create(:operatingsystem, :with_associations, :with_pxelinux)
+    os = FactoryBot.create(:operatingsystem, :with_associations, :with_pxelinux)
     assert_equal "PXELinux BIOS", os.preferred_loader
   end
 
   test "should have preferred pxe loader for OS with Grub template" do
-    os = FactoryGirl.create(:operatingsystem, :with_associations, :with_grub)
+    os = FactoryBot.create(:operatingsystem, :with_associations, :with_grub)
     assert_equal "Grub UEFI", os.preferred_loader
+  end
+
+  test "additional_media returns media from medium provider" do
+    os = FactoryBot.create(:operatingsystem, :with_associations, :with_pxelinux)
+    additional_media = [{name: 'EPEL', url: 'http://yum.example.com/epel'}]
+    MediumProviders::Default.any_instance.stubs(:additional_media).returns(additional_media)
+    provider = MediumProviders::Default.new(FactoryBot.build(:host))
+
+    os_media = os.additional_media(provider)
+    assert_instance_of HashWithIndifferentAccess, os_media.first
+    assert_equal os_media, additional_media.map(&:with_indifferent_access)
   end
 
   context 'os default templates' do
     setup do
-      @template_kind = FactoryGirl.create(:template_kind)
-      @provisioning_template = FactoryGirl.create(:provisioning_template, :template_kind_id => @template_kind.id)
+      @template_kind = FactoryBot.create(:template_kind)
+      @provisioning_template = FactoryBot.create(:provisioning_template, :template_kind_id => @template_kind.id)
       @os = operatingsystems(:centos5_3)
-      @os.update_attributes(:os_default_templates_attributes =>
+      @os.update(:os_default_templates_attributes =>
                                [{ :provisioning_template_id => @provisioning_template.id, :template_kind_id => @template_kind.id }]
       )
     end
@@ -294,7 +307,7 @@ class OperatingsystemTest < ActiveSupport::TestCase
     test 'should remove os default template' do
       # Association deleted, yet template_kind and provisioning_template not.
       assert_difference('@os.os_default_templates.length', -1) do
-        @os.update_attributes(:os_default_templates_attributes => { :id => @os.os_default_templates.last.id, :_destroy => 1 })
+        @os.update(:os_default_templates_attributes => { :id => @os.os_default_templates.last.id, :_destroy => 1 })
       end
       assert_valid @template_kind
       assert_valid @provisioning_template
@@ -302,21 +315,14 @@ class OperatingsystemTest < ActiveSupport::TestCase
   end
 
   test 'name can include utf-8 and non-alpha numeric chars' do
-    operatingsystem = FactoryGirl.build(:operatingsystem, :name => '<applet>מערכתההפעלהשלי', :major => 4)
+    operatingsystem = FactoryBot.build_stubbed(:operatingsystem, :name => '<applet>מערכתההפעלהשלי', :major => 4)
     assert operatingsystem.valid?
     assert_equal("#{operatingsystem.id}-applet-מערכתההפעלהשלי 4", operatingsystem.to_param)
   end
 
-  test 'interpolated $version does not include dots if only major is specified' do
-    operatingsystem = FactoryGirl.build(:operatingsystem, :name => 'foo', :major => '4')
-    result_path = operatingsystem.interpolate_medium_vars('http://foo.org/$version',
-                                                          'x64', operatingsystem)
-    assert result_path, 'http://foo.org/4'
-  end
-
   context 'name should be unique in scope of major and minor' do
     setup do
-      @os = FactoryGirl.create(:operatingsystem, :name => 'centos', :major => 8, :minor => 3)
+      @os = FactoryBot.create(:operatingsystem, :name => 'centos', :major => 8, :minor => 3)
     end
 
     test 'should not create os with existing name, major and minor' do
@@ -344,6 +350,25 @@ class OperatingsystemTest < ActiveSupport::TestCase
       refute_equal(@os.major, operatingsystem.major)
       assert operatingsystem.valid?
       assert operatingsystem.save
+    end
+  end
+
+  describe '#boot_filename' do
+    test 'should be the ipxe unattended url for iPXE' do
+      host = FactoryBot.build(:host, :managed, pxe_loader: 'iPXE Embedded')
+      assert_equal 'http://foreman.some.host.fqdn/unattended/iPXE', host.operatingsystem.boot_filename(host)
+    end
+
+    test 'should be the smart proxy ipxe unattended url for iPXE' do
+      template_server_from_proxy = 'https://someproxy:8443'
+      ProxyAPI::Template.any_instance.stubs(:template_url).returns(template_server_from_proxy)
+      host = FactoryBot.build(:host, :managed, :with_templates_subnet, pxe_loader: 'iPXE Embedded')
+      assert_equal 'https://someproxy:8443/unattended/iPXE', host.operatingsystem.boot_filename(host)
+    end
+
+    test 'should be the unattended url for a host without a subnet' do
+      host = FactoryBot.build(:host, :managed, pxe_loader: 'Grub2 UEFI HTTP')
+      assert_equal 'http://foreman.some.host.fqdn:80/httpboot/grub2/grubx64.efi', host.operatingsystem.boot_filename(host)
     end
   end
 end

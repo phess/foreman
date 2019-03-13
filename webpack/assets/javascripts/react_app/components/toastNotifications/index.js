@@ -1,30 +1,51 @@
-import React, { Component } from 'react';
-import Toast from './toastListitem/';
-import * as ToastActions from '../../redux/actions/toasts';
+import React from 'react';
+import PropTypes from 'prop-types';
 import { connect } from 'react-redux';
-import { map } from 'lodash';
+import {
+  ToastNotificationList,
+  ToastNotification,
+  TimedToastNotification,
+} from 'patternfly-react';
+import AlertBody from '../common/Alert/AlertBody';
+import * as ToastActions from '../../redux/actions/toasts';
+import { noop } from '../../common/helpers';
 
-class ToastsList extends Component {
+const ToastsList = ({ messages, deleteToast }) => {
+  const toastsList = Object.entries(messages)
+    .map(([key, message]) => ({ key, ...message }))
+    .map(({ key, link, message, sticky = false, ...toastProps }) => {
+      const ToastComponent = sticky
+        ? ToastNotification
+        : TimedToastNotification;
 
-  render() {
-    const { messages, deleteToast } = this.props;
+      return (
+        <ToastComponent
+          key={key}
+          onDismiss={() => deleteToast(key)}
+          {...toastProps}
+        >
+          <AlertBody link={link} message={message} />
+        </ToastComponent>
+      );
+    });
 
-    return (
-      <div className="toast-notifications-list-pf">
-        {
-          map(
-            messages,
-            toast => <Toast {...toast}
-                      dismiss={deleteToast.bind(this, toast.key)} />
-          )
-        }
-      </div>
-    );
-  }
-}
+  return <ToastNotificationList>{toastsList}</ToastNotificationList>;
+};
+
+ToastsList.propTypes = {
+  messages: PropTypes.object.isRequired,
+  deleteToast: PropTypes.func,
+};
+
+ToastsList.defaultProps = {
+  deleteToast: noop,
+};
 
 const mapStateToProps = state => ({
-  messages: state.toasts.messages
+  messages: state.toasts.messages,
 });
 
-export default connect(mapStateToProps, ToastActions)(ToastsList);
+export default connect(
+  mapStateToProps,
+  ToastActions
+)(ToastsList);

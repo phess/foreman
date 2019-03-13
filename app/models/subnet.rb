@@ -1,13 +1,14 @@
 require 'ipaddr'
 
 class Subnet < ApplicationRecord
+  audited
   IP_FIELDS = [:network, :mask, :gateway, :dns_primary, :dns_secondary, :from, :to]
   REQUIRED_IP_FIELDS = [:network, :mask]
   SUBNET_TYPES = {:'Subnet::Ipv4' => N_('IPv4'), :'Subnet::Ipv6' => N_('IPv6')}
   BOOT_MODES = {:static => N_('Static'), :dhcp => N_('DHCP')}
 
   include Authorizable
-  include Foreman::STI
+  prepend Foreman::STI
   extend FriendlyId
   friendly_id :name
   include Taxonomix
@@ -16,7 +17,7 @@ class Subnet < ApplicationRecord
   include BelongsToProxies
 
   attr_exportable :name, :network, :mask, :gateway, :dns_primary, :dns_secondary, :from, :to, :boot_mode,
-    :ipam, :vlanid, :network_type, :description
+    :ipam, :vlanid, :mtu, :network_type, :description
 
   # This sets the rails model name of all child classes to the
   # model name of the parent class, i.e. Subnet.
@@ -32,8 +33,6 @@ class Subnet < ApplicationRecord
     end
     super
   end
-
-  audited
 
   validates_lengths_from_database :except => [:gateway]
   before_destroy EnsureNotUsedBy.new(:hosts, :hostgroups, :interfaces, :domains)
@@ -51,11 +50,23 @@ class Subnet < ApplicationRecord
     :api_description => N_('TFTP Proxy ID to use within this subnet'),
     :description => N_('TFTP Proxy to use within this subnet')
 
+  belongs_to_proxy :httpboot,
+    :feature => N_('HTTPBoot'),
+    :label => N_('HTTPBoot Proxy'),
+    :api_description => N_('HTTPBoot Proxy ID to use within this subnet'),
+    :description => N_('HTTPBoot Proxy to use within this subnet')
+
   belongs_to_proxy :dns,
     :feature => N_('DNS'),
     :label => N_('Reverse DNS Proxy'),
     :api_description => N_('DNS Proxy ID to use within this subnet'),
     :description => N_('DNS Proxy to use within this subnet for managing PTR records, note that A and AAAA records are managed via Domain DNS proxy')
+
+  belongs_to_proxy :template,
+    :feature => N_('Templates'),
+    :label => N_('Template Proxy'),
+    :api_description => N_('Template HTTP(S) Proxy ID to use within this subnet'),
+    :description => N_('Template HTTP(S) Proxy to use within this subnet to allow access templating endpoint from isolated networks')
 
   has_many :hostgroups
   has_many :subnet_domains, :dependent => :destroy, :inverse_of => :subnet
@@ -69,6 +80,8 @@ class Subnet < ApplicationRecord
   validates :ipam, :inclusion => {:in => Proc.new { |subnet| subnet.supported_ipam_modes.map {|m| IPAM::MODES[m]} }, :message => N_('not supported by this protocol')}
   validates :type, :inclusion => {:in => Proc.new { Subnet::SUBNET_TYPES.keys.map(&:to_s) }, :message => N_("must be one of [ %s ]" % Subnet::SUBNET_TYPES.keys.map(&:to_s).join(', ')) }
   validates :name, :length => {:maximum => 255}, :uniqueness => true
+  validates :vlanid, numericality: { :only_integer => true, :greater_than_or_equal_to => 0, :less_than => 4096}, :allow_blank => true
+  validates :mtu, :presence => true
 
   before_validation :normalize_addresses
   validate :ensure_ip_addrs_valid
@@ -78,21 +91,21 @@ class Subnet < ApplicationRecord
 
   default_scope lambda {
     with_taxonomy_scope do
-      order('vlanid')
+      order(:vlanid)
     end
   }
 
   scoped_search :on => [:name, :network, :mask, :gateway, :dns_primary, :dns_secondary,
-                        :vlanid, :ipam, :boot_mode, :type], :complete_value => true
+                        :vlanid, :mtu, :ipam, :boot_mode, :type], :complete_value => true
 
   scoped_search :relation => :domains, :on => :name, :rename => :domain, :complete_value => true
-  scoped_search :relation => :subnet_parameters, :on => :value, :on_key=> :name, :complete_value => true, :only_explicit => true, :rename => :params
+  scoped_search :relation => :subnet_parameters, :on => :value, :on_key => :name, :complete_value => true, :only_explicit => true, :rename => :params
 
   delegate :supports_ipam_mode?, :supported_ipam_modes, :show_mask?, to: 'self.class'
 
   class Jail < ::Safemode::Jail
-    allow :name, :network, :mask, :cidr, :title, :to_label, :gateway, :dns_primary, :dns_secondary,
-          :vlanid, :boot_mode, :dhcp?, :nil?, :has_vlanid?, :dhcp_boot_mode?, :description
+    allow :name, :network, :mask, :cidr, :title, :to_label, :gateway, :dns_primary, :dns_secondary, :dns_servers,
+          :vlanid, :mtu, :boot_mode, :dhcp?, :nil?, :has_vlanid?, :dhcp_boot_mode?, :description, :present?
   end
 
   # Subnets are displayed in the form of their network network/network mask
@@ -114,17 +127,6 @@ class Subnet < ApplicationRecord
 
   def network_type=(value)
     self[:type] = SUBNET_TYPES.key(value)
-  end
-
-  # Subnets are sorted on their priority value
-  # [+other+] : Subnet object with which to compare ourself
-  # +returns+ : Subnet object with higher precedence
-  def <=>(other)
-    if self.vlanid.present? && other.vlanid.present?
-      self.vlanid <=> other.vlanid
-    else
-      return -1
-    end
   end
 
   # Indicates whether the IP is within this subnet
@@ -161,20 +163,36 @@ class Subnet < ApplicationRecord
   end
 
   def tftp?
-    !!(tftp && tftp.url && !tftp.url.blank?)
+    !!(tftp && tftp.url && tftp.url.present?)
   end
 
   def tftp_proxy(attrs = {})
     @tftp_proxy ||= ProxyAPI::TFTP.new({:url => tftp.url}.merge(attrs)) if tftp?
   end
 
+  def httpboot?
+    !!(httpboot && httpboot.url && httpboot.url.present?)
+  end
+
+  def httpboot_proxy(attrs = {})
+    @httpboot_proxy ||= ProxyAPI::TFTP.new({:url => httpboot.url}.merge(attrs)) if httpboot?
+  end
+
   # do we support DNS PTR records for this subnet
   def dns?
-    !!(dns && dns.url && !dns.url.blank?)
+    !!(dns && dns.url && dns.url.present?)
   end
 
   def dns_proxy(attrs = {})
     @dns_proxy ||= ProxyAPI::DNS.new({:url => dns.url}.merge(attrs)) if dns?
+  end
+
+  def template?
+    !!(template && template.url)
+  end
+
+  def template_proxy(attrs = {})
+    @template_proxy ||= ProxyAPI::Template.new({:url => template.url}.merge(attrs)) if template?
   end
 
   def ipam?
@@ -191,7 +209,7 @@ class Subnet < ApplicationRecord
 
   def unused_ip(mac = nil, excluded_ips = [])
     unless supported_ipam_modes.map {|m| IPAM::MODES[m]}.include?(self.ipam)
-      raise ::Foreman::Exception.new(N_("Unsupported IPAM mode for %s") % self.class)
+      raise ::Foreman::Exception.new(N_("Unsupported IPAM mode for %s"), self.class.name)
     end
 
     opts = {:subnet => self, :mac => mac, :excluded_ips => excluded_ips}
@@ -206,7 +224,7 @@ class Subnet < ApplicationRecord
   end
 
   def proxies
-    [dhcp, tftp, dns].compact
+    [dhcp, tftp, dns, httpboot].compact
   end
 
   def has_vlanid?
@@ -223,6 +241,10 @@ class Subnet < ApplicationRecord
     super({:methods => [:to_label, :type]}.merge(options))
   end
 
+  def dns_servers
+    [dns_primary, dns_secondary].select(&:present?)
+  end
+
   private
 
   def validate_ranges
@@ -230,9 +252,9 @@ class Subnet < ApplicationRecord
       errors.add(:from, _("must be specified if to is defined"))   if from.blank?
       errors.add(:to,   _("must be specified if from is defined")) if to.blank?
     end
-    return if errors.keys.include?(:from) || errors.keys.include?(:to)
-    errors.add(:from, _("does not belong to subnet"))     if from.present? && !self.contains?(f=IPAddr.new(from))
-    errors.add(:to, _("does not belong to subnet"))       if to.present?   && !self.contains?(t=IPAddr.new(to))
+    return if errors.key?(:from) || errors.key?(:to)
+    errors.add(:from, _("does not belong to subnet"))     if from.present? && !self.contains?(f = IPAddr.new(from))
+    errors.add(:to, _("does not belong to subnet"))       if to.present?   && !self.contains?(t = IPAddr.new(to))
     errors.add(:from, _("can't be bigger than to range")) if from.present? && t.present? && f > t
   end
 
@@ -252,7 +274,7 @@ class Subnet < ApplicationRecord
 
   def ensure_ip_addrs_valid
     IP_FIELDS.each do |f|
-      errors.add(f, _("is invalid")) if (send(f).present? || REQUIRED_IP_FIELDS.include?(f)) && !validate_ip(send(f)) && !errors.keys.include?(f)
+      errors.add(f, _("is invalid")) if (send(f).present? || REQUIRED_IP_FIELDS.include?(f)) && !validate_ip(send(f)) && !errors.key?(f)
     end
   end
 
@@ -269,22 +291,21 @@ class Subnet < ApplicationRecord
       supported_ipam_modes.map {|mode| [_(IPAM::MODES[mode]), IPAM::MODES[mode]]}
     end
 
-    # Given an IP returns the subnet that contains that IP
+    # Given an IP returns the subnet that contains that IP preferring highest CIDR prefix
     # [+ip+] : IPv4 or IPv6 address
     # Returns : Subnet object or nil if not found
     def subnet_for(ip)
       return unless ip.present?
       ip = IPAddr.new(ip)
-      Subnet.all.detect {|s| s.family == ip.family && s.contains?(ip)}
+      Subnet.unscoped.all.select {|s| s.family == ip.family && s.contains?(ip)}.max_by(&:cidr)
     end
 
     # This casts Subnet to Subnet::Ipv4 if no type is set
-    def new_with_default_type(*attributes, &block)
+    def new(*attributes, &block)
       type = attributes.first.with_indifferent_access.delete(:type) if attributes.first.is_a?(Hash)
-      return Subnet::Ipv4.new_without_cast(*attributes, &block) if self == Subnet && type.nil?
-      new_without_default_type(*attributes, &block)
+      return Subnet::Ipv4.new(*attributes, &block) if self == Subnet && type.nil?
+      super
     end
-    alias_method_chain :new, :default_type
 
     # allows to create a specific subnet class based on the network_type.
     # network_type is more user friendly than the class names

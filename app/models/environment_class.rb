@@ -1,7 +1,7 @@
 class EnvironmentClass < ApplicationRecord
   belongs_to :environment
-  belongs_to :puppetclass
-  belongs_to :puppetclass_lookup_key
+  belongs_to :puppetclass, :inverse_of => :environment_classes
+  belongs_to :puppetclass_lookup_key, :inverse_of => :environment_classes
   validates :puppetclass_lookup_key_id, :uniqueness => {:scope => [:environment_id, :puppetclass_id]}
   validates :puppetclass_id, :environment_id, :presence => true
   after_destroy :delete_orphaned_lookup_keys
@@ -16,18 +16,18 @@ class EnvironmentClass < ApplicationRecord
       includes(:puppetclass_lookup_key)
   }
 
-  scope :used_by_other_environment_classes, lambda{|puppetclass_lookup_key_id, this_environment_class_id|
+  scope :used_by_other_environment_classes, lambda {|puppetclass_lookup_key_id, this_environment_class_id|
     where(:puppetclass_lookup_key_id => puppetclass_lookup_key_id).
       where("id != #{this_environment_class_id}")
   }
 
-  #TODO move these into scopes?
+  # TODO move these into scopes?
   def self.is_in_any_environment(puppetclass, puppetclass_lookup_key)
     EnvironmentClass.where(:puppetclass_id => puppetclass, :puppetclass_lookup_key_id => puppetclass_lookup_key).count > 0
   end
 
   def self.key_in_environment(env, puppetclass, puppetclass_lookup_key)
-    EnvironmentClass.where(:environment_id => env, :puppetclass_id => puppetclass, :puppetclass_lookup_key_id => puppetclass_lookup_key).first
+    EnvironmentClass.find_by(:environment_id => env, :puppetclass_id => puppetclass, :puppetclass_lookup_key_id => puppetclass_lookup_key)
   end
 
   def delete_orphaned_lookup_keys

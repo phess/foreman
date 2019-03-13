@@ -2,8 +2,6 @@ module Api
   module V2
     class ConfigTemplatesController < V2::BaseController
       include Api::Version2
-      include Api::TaxonomyScope
-      include Foreman::Renderer
       include Foreman::Controller::ProvisioningTemplates
       include Foreman::Controller::Parameters::ProvisioningTemplate
 
@@ -23,6 +21,7 @@ module Api
       param :operatingsystem_id, String, :desc => N_("ID of operating system")
       param_group :taxonomy_scope, ::Api::V2::BaseController
       param_group :search_and_pagination, ::Api::V2::BaseController
+      add_scoped_search_description_for(ProvisioningTemplate)
 
       def index
         @config_templates = resource_scope_for_index.includes(:template_kind)
@@ -62,7 +61,7 @@ module Api
       param_group :config_template
 
       def update
-        process_response @config_template.update_attributes(provisioning_template_params)
+        process_response @config_template.update(provisioning_template_params)
       end
 
       api :GET, "/config_templates/revision"
@@ -84,7 +83,7 @@ module Api
 
       def build_pxe_default
         Foreman::Deprecation.api_deprecation_warning("GET method for build pxe default is deprecated. Please use POST instead") if request.method == "GET"
-        status, msg = ProvisioningTemplate.authorized(:deploy_provisioning_templates).build_pxe_default(self)
+        status, msg = ProvisioningTemplate.authorized(:deploy_provisioning_templates).build_pxe_default
         render_message(msg, :status => status)
       end
 

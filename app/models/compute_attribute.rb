@@ -11,10 +11,14 @@ class ComputeAttribute < ApplicationRecord
   before_save :update_name
 
   delegate :provider_friendly_name, :to => :compute_resource
+  scoped_search :on => [:name], :complete_value => true
+
+  scoped_search :relation => :compute_resource, :on => :name, :rename => :compute_resource, :complete_value => true
+  scoped_search :relation => :compute_profile, :on => :name, :rename => :compute_profile, :complete_value => true
 
   def method_missing(method, *args, &block)
     method = method.to_s
-    return super if method[-1]=="="
+    return super if method[-1] == "="
     return super if method == 'vm_attrs'
 
     if vm_attrs.has_key?(method)
@@ -28,12 +32,16 @@ class ComputeAttribute < ApplicationRecord
     vm_attrs.has_key?(method.to_s) || super
   end
 
+  def normalized_vm_attrs
+    compute_resource.normalize_vm_attrs(vm_attrs)
+  end
+
   def vm_interfaces
     attribute_values(compute_resource.interfaces_attrs_name)
   end
 
   def new_vm
-    compute_resource.new_vm(vm_attrs) if vm_attrs
+    compute_resource.new_vm(vm_attrs.dup) if vm_attrs
   end
 
   def pretty_vm_attrs

@@ -1,0 +1,68 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`AutoComplete rendering renders AutoComplete 1`] = `
+<div
+  className="foreman-autocomplete"
+>
+  <TypeaheadContainer(WrappedTypeahead)
+    a11yNumResults={[Function]}
+    a11yNumSelected={[Function]}
+    align="justify"
+    allowNew={false}
+    autoFocus={false}
+    caseSensitive={false}
+    clearButton={false}
+    defaultInputValue=""
+    defaultOpen={false}
+    defaultSelected={Array []}
+    disabled={false}
+    dropup={false}
+    emptyLabel={null}
+    filterBy={Array []}
+    flip={false}
+    highlightOnlyResult={false}
+    ignoreDiacritics={true}
+    inputProps={
+      Object {
+        "className": "search-input use-shortcuts",
+        "spellCheck": "false",
+      }
+    }
+    isInvalid={false}
+    isLoading={false}
+    isValid={false}
+    labelKey="label"
+    maxResults={100}
+    minLength={0}
+    multiple={false}
+    onBlur={[Function]}
+    onChange={[Function]}
+    onFocus={[Function]}
+    onInputChange={[Function]}
+    onKeyDown={[Function]}
+    onPaginate={[Function]}
+    options={
+      Array [
+        Object {
+          "category": "category",
+          "label": "some results",
+        },
+      ]
+    }
+    paginate={true}
+    paginationText="Display additional results..."
+    placeholder="Filter ..."
+    renderMenu={[Function]}
+    selectHintOnEnter={false}
+  />
+  <AutoCompleteAux
+    onClear={[Function]}
+  />
+  <AutoCompleteFocusShortcut
+    useKeyShortcuts={true}
+  />
+  <AutoCompleteError
+    error={null}
+  />
+</div>
+`;

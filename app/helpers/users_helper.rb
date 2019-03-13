@@ -4,7 +4,7 @@ module UsersHelper
   end
 
   def auth_source_column(record)
-    record.auth_source.to_label if record.auth_source
+    record.auth_source&.to_label
   end
 
   def contracted_host_list(user)
@@ -19,10 +19,12 @@ module UsersHelper
   end
 
   def user_taxonomies_html_options(user)
-    {
-      :location     => { :onchange => 'tfm.users.taxonomyAdded(this, "location")'},
-      :organization => { :onchange => 'tfm.users.taxonomyAdded(this, "organization")'}
-    } unless user.admin?
+    unless user.admin?
+      {
+        :location     => { :onchange => 'tfm.users.taxonomyAdded(this, "location")'},
+        :organization => { :onchange => 'tfm.users.taxonomyAdded(this, "organization")'}
+      }
+    end
   end
 
   def mail_notification_query_builder(mail_notification, f)

@@ -1,7 +1,6 @@
 class NotificationRecipientsController < Api::V2::BaseController
   include Foreman::Controller::Parameters::NotificationRecipient
   skip_before_action :update_activity_time, :only => [:index]
-  before_action :require_login
   before_action :find_resource, :only => [:update, :destroy]
 
   def index
@@ -10,7 +9,7 @@ class NotificationRecipientsController < Api::V2::BaseController
   end
 
   def update
-    process_response @notification_recipient.update_attributes(notification_recipient_params)
+    process_response @notification_recipient.update(notification_recipient_params)
   end
 
   def destroy
@@ -30,11 +29,20 @@ class NotificationRecipientsController < Api::V2::BaseController
     head (count.zero? ? :not_modified : :ok)
   end
 
-  private
+  def destroy_group
+    count = NotificationRecipient.
+      joins(:notification_blueprint).
+      where(user_id: User.current.id,
+            notification_blueprints: { group: params[:group]}).
+      delete_all
 
-  def require_login
-    not_found unless SETTINGS[:login]
+    logger.debug("deleted #{count} notification recipents for group #{params[:group]}")
+    UINotifications::CacheHandler.new(User.current.id).clear unless count.zero?
+
+    head (count.zero? ? :not_modified : :ok)
   end
+
+  private
 
   def find_resource
     super

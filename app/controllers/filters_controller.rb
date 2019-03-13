@@ -2,12 +2,12 @@ class FiltersController < ApplicationController
   include Foreman::Controller::AutoCompleteSearch
   include Foreman::Controller::Parameters::Filter
 
-  before_action :find_role
+  before_action :find_role, :except => :edit
   before_action :setup_search_options, :only => :index
 
   def index
-    @filters = resource_base.includes(:role, :permissions).search_for(params[:search], :order => params[:order])
-    @filters = @filters.paginate(:page => params[:page], :per_page=> params[:per_page]) unless params[:paginate] == 'client'
+    @filters = resource_base.unscoped.includes(:role, :permissions).search_for(params[:search], :order => params[:order])
+    @filters = @filters.paginate(:page => params[:page], :per_page => params[:per_page]) unless params[:paginate] == 'client'
     @roles_authorizer = Authorizer.new(User.current, :collection => @filters.map(&:role_id))
   end
 
@@ -30,7 +30,7 @@ class FiltersController < ApplicationController
 
   def update
     @filter = resource_base.find(params[:id])
-    if @filter.update_attributes(filter_params)
+    if @filter.update(filter_params)
       process_success :success_redirect => saved_redirect_url_or(filters_path(:role_id => @role))
     else
       process_error
@@ -69,7 +69,7 @@ class FiltersController < ApplicationController
 
   def resource_base
     @resource_base ||= if @role.present?
-                         @role.filters.authorized(current_permission)
+                         Filter.authorized(current_permission)
                        else
                          Filter.where(nil).authorized(current_permission)
                        end
@@ -84,13 +84,13 @@ class FiltersController < ApplicationController
     params[:search] ||= ""
     params.keys.each do |param|
       if param =~ /role_id$/
-        unless (role = Role.find_by_id(params[param])).blank?
+        if (role = Role.find_by_id(params[param])).present?
           query = "role_id = #{role.id}"
           params[:search] += query unless params[:search].include? query
         end
       elsif param =~ /(\w+)_id$/
-        unless params[param].blank?
-          query = "#{$1} = #{params[param]}"
+        if params[param].present?
+          query = "#{Regexp.last_match(1)} = #{params[param]}"
           params[:search] += query unless params[:search].include? query
         end
       end

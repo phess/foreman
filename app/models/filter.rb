@@ -1,4 +1,6 @@
 class Filter < ApplicationRecord
+  audited :associated_with => :role
+
   include Taxonomix
   include Authorizable
   include TopbarCacheExpiry
@@ -24,19 +26,10 @@ class Filter < ApplicationRecord
     false
   end
 
+  # allow creating filters for non-taxable resources when user is not admin
   def ensure_taxonomies_not_escalated
-    super if skip_taxonomy_escalation_check?
   end
 
-  def skip_taxonomy_escalation_check?
-    if self.resource_class.present?
-      !self.resource_class.included_modules.include?(Taxonomix)
-    else
-      true
-    end
-  end
-
-  audited :associated_with => :role
   belongs_to :role
   has_many :filterings, :autosave => true, :dependent => :destroy
   has_many :permissions, :through => :filterings
@@ -69,7 +62,7 @@ class Filter < ApplicationRecord
   validate :same_resource_type_permissions, :not_empty_permissions, :allowed_taxonomies
 
   def self.search_by_unlimited(key, operator, value)
-    search_by_limited(key, operator, value == 'true' ? 'false' : 'true')
+    search_by_limited(key, operator, (value == 'true') ? 'false' : 'true')
   end
 
   def self.search_by_limited(key, operator, value)
@@ -88,7 +81,7 @@ class Filter < ApplicationRecord
     resource_type.constantize
   rescue NameError => e
     Foreman::Logging.exception("unknown class #{resource_type}, ignoring", e)
-    return nil
+    nil
   end
 
   def unlimited?
@@ -109,7 +102,7 @@ class Filter < ApplicationRecord
 
   def resource_type
     type = @resource_type || filterings.first.try(:permission).try(:resource_type)
-    type.blank? ? nil : type
+    type.presence
   end
 
   def resource_class
@@ -140,7 +133,7 @@ class Filter < ApplicationRecord
 
   def search_condition
     searches = [self.search]
-    searches << self.taxonomy_search if Taxonomy.enabled_taxonomies.any?
+    searches << self.taxonomy_search
     searches.compact!
     searches.map! { |s| parenthesize(s) } if searches.size > 1
     searches.join(' and ')
@@ -206,14 +199,16 @@ class Filter < ApplicationRecord
   # if we have 0 types, empty validation will set error, we can't have more than one type
   def same_resource_type_permissions
     types = self.permissions.map(&:resource_type).uniq
-    errors.add(
-      :permissions,
-      _('must be of same resource type (%s) - Role (%s)') %
-      [
-        types.join(','),
-        self.role.name
-      ]
-    ) if types.size > 1
+    if types.size > 1
+      errors.add(
+        :permissions,
+        _('must be of same resource type (%{types}) - Role (%{role})') %
+        {
+          types: types.join(','),
+          role: self.role.name
+        }
+      )
+    end
   end
 
   def not_empty_permissions

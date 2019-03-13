@@ -1,6 +1,8 @@
 class ReportImporter
+  include Foreman::TelemetryHelper
+
   delegate :logger, :to => :Rails
-  attr_reader :report
+  attr_reader :report, :report_scanners
 
   # When writing your own Report importer, provide feature(s) of authorized Smart Proxies
   def self.authorized_smart_proxy_features
@@ -33,15 +35,27 @@ class ReportImporter
   end
 
   def import
-    start_time = Time.now
     logger.debug { "Processing report: #{raw.inspect}" }
-    create_report_and_logs
-    if report.persisted?
-      imported_time = Time.now
-      host.refresh_statuses(statuses_for_refresh)
-      refreshed_time = Time.now
-      logger.info("Imported report for #{name} in #{(imported_time - start_time).round(2)} seconds, status refreshed in #{(refreshed_time - imported_time).round(2)} seconds")
+    telemetry = {}
+    telemetry_duration_histogram(:report_importer_create, :ms, {type: self.class.name}, telemetry) do
+      create_report_and_logs
     end
+    if report.persisted?
+      telemetry_duration_histogram(:report_importer_refresh, :ms, {type: self.class.name}, telemetry) do
+        host.refresh_statuses(statuses_for_refresh)
+      end
+      create = telemetry[:report_importer_create].try(:round, 1)
+      refresh = telemetry[:report_importer_refresh].try(:round, 1)
+      logger.info("Imported report for #{name} in #{create} ms, status refreshed in #{refresh} ms")
+    end
+  end
+
+  def scan
+    logger.info "Scanning report with: #{report_scanners.join(', ')}"
+    report_scanners.each do |scanner|
+      break if scanner.scan(report, logs)
+    end
+    logger.debug { "Changes after scanning: #{report.changes.inspect}" }
   end
 
   private
@@ -108,10 +122,10 @@ class ReportImporter
       users.select { |user| Host.authorized_as(user, :view_hosts).find(host.id).present? }
       owners.concat users
       if owners.present?
-        logger.debug "sending alert to #{owners.map(&:login).join(',')}"
+        logger.debug { "sending alert to #{owners.map(&:login).join(',')}" }
         MailNotification[mail_error_state].deliver(report, :users => owners.uniq)
       else
-        logger.debug "no owner or recipients for alert on #{name}"
+        logger.debug { "no owner or recipients for alert on #{name}" }
       end
     end
   end
@@ -130,10 +144,17 @@ class ReportImporter
     host.save(:validate => false)
 
     status = report_status
-
     # and save our report
     @report = report_name_class.new(:host => host, :reported_at => time, :status => status, :metrics => raw['metrics'])
+
+    # Run report scanner
+    scan
+
     @report.save
     @report
+  end
+
+  def report_scanners
+    Foreman::Plugin.report_scanner_registry.report_scanners
   end
 end

@@ -1,4 +1,5 @@
 class Puppetclass < ApplicationRecord
+  audited
   include Authorizable
   include ScopedSearchExtensions
   extend FriendlyId
@@ -7,8 +8,11 @@ class Puppetclass < ApplicationRecord
 
   validates_lengths_from_database
   before_destroy EnsureNotUsedBy.new(:hosts, :hostgroups)
-  has_many :environment_classes, :dependent => :destroy
+  has_many :environment_classes, :dependent => :destroy, :inverse_of => :puppetclass
   has_many :environments, -> { distinct }, :through => :environment_classes
+  has_many :organizations, :through => :environments
+  has_many :locations, :through => :environments
+
   has_and_belongs_to_many :operatingsystems
   has_many :hostgroup_classes
   has_many :hostgroups, :through => :hostgroup_classes, :dependent => :destroy
@@ -24,7 +28,6 @@ class Puppetclass < ApplicationRecord
   accepts_nested_attributes_for :class_params, :reject_if => ->(a) { a[:key].blank? }, :allow_destroy => true
 
   validates :name, :uniqueness => true, :presence => true, :no_whitespace => true
-  audited
 
   alias_attribute :smart_variables, :lookup_keys
   alias_attribute :smart_variable_ids, :lookup_key_ids
@@ -35,6 +38,8 @@ class Puppetclass < ApplicationRecord
 
   scoped_search :on => :name, :complete_value => :true
   scoped_search :relation => :environments, :on => :name, :complete_value => :true, :rename => "environment"
+  scoped_search :relation => :organizations, :on => :name, :complete_value => :true, :rename => "organization"
+  scoped_search :relation => :locations, :on => :name, :complete_value => :true, :rename => "location"
   scoped_search :relation => :hostgroups, :on => :name, :complete_value => :true, :rename => "hostgroup", :only_explicit => true
   scoped_search :relation => :config_groups, :on => :name, :complete_value => :true, :rename => "config_group", :only_explicit => true
   scoped_search :relation => :hosts, :on => :name, :complete_value => :true, :rename => "host", :ext_method => :search_by_host, :only_explicit => true
@@ -45,7 +50,7 @@ class Puppetclass < ApplicationRecord
   # returns a hash containing modules and associated classes
   def self.classes2hash(classes)
     hash = {}
-    for klass in classes
+    classes.each do |klass|
       if (mod = klass.module_name)
         hash[mod] ||= []
         hash[mod] << klass
@@ -71,12 +76,12 @@ class Puppetclass < ApplicationRecord
   # returns module name (excluding of the class name)
   # if class separator does not exists (the "::" chars), then returns the whole class name
   def module_name
-    (i = name.index("::")) ? name[0..i-1] : name
+    (i = name.index("::")) ? name[0..i - 1] : name
   end
 
   # returns class name (excluding of the module name)
   def klass
-    name.gsub(module_name+"::","")
+    name.gsub(module_name + "::", "")
   end
 
   def all_hostgroups(with_descendants = true, unsorted = false)
@@ -100,7 +105,7 @@ class Puppetclass < ApplicationRecord
   def self.search_by_host(key, operator, value)
     conditions = sanitize_sql_for_conditions(["hosts.name #{operator} ?", value_to_sql(operator, value)])
     direct     = Puppetclass.joins(:hosts).where(conditions).pluck('puppetclasses.id').uniq
-    hostgroup  = Hostgroup.joins(:hosts).where(conditions).first
+    hostgroup  = Hostgroup.joins(:hosts).find_by(conditions)
     indirect   = hostgroup.blank? ? [] : HostgroupClass.where(:hostgroup_id => hostgroup.path_ids).distinct.pluck('puppetclass_id')
     return { :conditions => "1=0" } if direct.blank? && indirect.blank?
 

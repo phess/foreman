@@ -13,7 +13,7 @@ class ForemanUrlRendererTest < ActiveSupport::TestCase
     attr_accessor :host, :template_url
   end
 
-  let(:host) { FactoryGirl.build(:host, :managed, :with_dhcp_orchestration) }
+  let(:host) { FactoryBot.build_stubbed(:host, :managed, :with_dhcp_orchestration) }
   let(:renderer) { Renderer.new }
   let(:action) { 'provision' }
 
@@ -37,11 +37,15 @@ class ForemanUrlRendererTest < ActiveSupport::TestCase
 
     test "should render template_url with templates proxy" do
       template_server_from_proxy = 'https://someproxy:8443'
-      proxy = FactoryGirl.create(:template_smart_proxy)
-      ProxyAPI::Template.any_instance.stubs(:template_url).returns(template_server_from_proxy)
-      host.subnet.tftp = proxy
+      proxy = FactoryBot.build_stubbed(:template_smart_proxy, :url => 'https://template.proxy:8443')
+
+      stub_request(:get, "https://template.proxy:8443/unattended/templateServer").
+         to_return(status: 200, body: "{\"templateServer\":\"#{template_server_from_proxy}\"}")
+
+      host.subnet.template = proxy
       renderer.host = host
       assert_equal "#{template_server_from_proxy}/unattended/#{action}?token=#{token}", renderer.foreman_url(action)
+      assert_requested(:get, "https://template.proxy:8443/unattended/templateServer", times: 1)
     end
   end
 end

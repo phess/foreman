@@ -4,15 +4,11 @@ scss:
 stylelint:
   enabled: true
 
-ruby:
+rubocop:
   config_file: .rubocop.yml
+  version: 0.59.2
 
 jshint:
   enabled: false
-
-eslint:
-  enabled: true
-  config_file: .eslintrc
-  ignore_file: .eslintignore
 
 fail_on_violations: true

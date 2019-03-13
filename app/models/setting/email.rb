@@ -1,5 +1,3 @@
-require 'facter'
-
 class Setting::Email < Setting
   NON_EMAIL_YAML_SETTINGS = %w(send_welcome_email email_reply_address email_subject_prefix)
 
@@ -25,6 +23,8 @@ class Setting::Email < Setting
     ]
   end
 
+  validates :value, :length => {:maximum => 255}, :if => Proc.new { |s| s.name == "email_subject_prefix" }
+
   def self.load_defaults
     # Check the table exists
     return unless super
@@ -38,7 +38,7 @@ class Setting::Email < Setting
 
   def self.delivery_settings
     options = {}
-    self.all.each do |setting|
+    self.all.find_each do |setting|
       extracted = {:smtp => extract_prefix(setting.name, 'smtp'), :sendmail => extract_prefix(setting.name, 'sendmail')}
       ["smtp", "sendmail"].each do |method|
         if Setting[:delivery_method].to_s == method && setting.name.start_with?(method) && setting.value.to_s.present?

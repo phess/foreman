@@ -1,6 +1,12 @@
 module Foreman
   module Dynflow
     class Configuration < ::Dynflow::Rails::Configuration
+      def initialize
+        super
+        self.pool_size = SETTINGS.fetch(:dynflow, {})
+                                 .fetch(:pool_size, pool_size)
+      end
+
       # Action related info such as exceptions raised inside the actions' methods
       def action_logger
         Foreman::Logging.logger('background')

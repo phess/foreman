@@ -1,6 +1,11 @@
 module OperatingsystemsHelper
   include CommonParametersHelper
 
+  def label(record)
+    return "" if record.blank? || record.name.blank?
+    record.to_label
+  end
+
   def icon(record, opts = {})
     return "" if record.blank? || record.name.blank?
     family = case record.name
@@ -25,25 +30,30 @@ module OperatingsystemsHelper
              when /SLC/i
                "SLC"
              when /FreeBSD/i
-               "FreeBSD"
+               "Freebsd"
              when /aix/i
                "AIX"
              when /Junos/i
                "Junos"
+             when /VRP/i
+               "VRP"
              when /OracleLinux/i
                "OracleLinux"
-             when /CoreOS/i
-               "CoreOS"
+             when /CoreOS|ContainerLinux|Container Linux/i
+               "Coreos"
+             when /RancherOS/i
+               "Rancheros"
              when /NXOS/i
                "NXOS"
              when /XenServer/i
-               "XenServer"
+               "Xenserver"
              else
                return "" if record.family.blank?
                record.family
              end
+    return image_path(family + ".png") if opts[:path]
 
-    image_tag(family+".png", opts) + " "
+    image_tag(family + ".png", opts) + " "
   end
 
   def os_name(record, opts = {})

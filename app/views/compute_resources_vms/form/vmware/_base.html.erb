@@ -1,4 +1,3 @@
-<%= javascript 'compute_resource' %>
 <%= javascript_tag("$(document).on('ContentLoad', tfm.numFields.initCounter)"); %>
 <%= text_f f, :name, :label => _('Name'), :disabled => !new_vm if show_vm_name? %>
 <%= counter_f f, :cpus, :label => _('CPUs'), :label_size => 'col-md-2', :'data-soft-max' => compute_resource.max_cpu_count %>
@@ -12,16 +11,16 @@
 end %>
 <%= selectable_f f, :cluster, compute_resource.clusters, { :include_blank => _('Please select a cluster') },
                     :class => "col-md-2", :disabled => !new_vm,
-                    :label => _('Cluster'), :onchange => 'vsphereGetResourcePools(this)',
+                    :label => _('Cluster'), :onchange => 'tfm.computeResource.vmware.onClusterChange(this)',
                     :help_inline => :indicator,
-                    :data => {:url => resource_pools_compute_resource_path(compute_resource)} %>
+                    :data => {:poolsurl => resource_pools_compute_resource_path(compute_resource), :networksurl => available_networks_api_compute_resource_path(compute_resource)} %>
 <%= vsphere_resource_pools(f, compute_resource, !new_vm) %>
 <%= select_f f, :path, compute_resource.folders, :path, :to_label , {}, { :label => _("Folder"), :class => "col-md-2", :disabled => !new_vm } %>
 <%= select_f f, :guest_id, compute_resource.guest_types, :first, :last, {}, { :label => _("Guest OS"), :class => "col-md-2", :disabled => !new_vm } %>
 <%= select_f f, :hardware_version, compute_resource.vm_hw_versions, :first, :last, {}, { :label => _("Virtual H/W version"), :class => "col-md-2", :disabled => !new_vm } %>
 <%= checkbox_f f, :memoryHotAddEnabled, { :help_inline => _("Memory hot add lets you add memory resources for a virtual machine while the machine is powered on."), :label => _('Memory hot add'), :label_size => "col-md-2", :disabled => !new_vm } %>
 <%= checkbox_f f, :cpuHotAddEnabled, { :help_inline => _("CPU hot add lets you add CPU resources for a virtual machine while the machine is powered on."), :label => _('CPU hot add'), :label_size => "col-md-2", :disabled => !new_vm } %>
-<%= checkbox_f f, :add_cdrom, { :help_inline => _("Add a CD-ROM drive to the virtual machine."), :label => _('CD-ROM drive'), :label_size => "col-md-2" } if new_vm %>
+<%= checkbox_f f, :add_cdrom, { :checked => f.object.attributes[:cdroms].present?, :help_inline => _("Add a CD-ROM drive to the virtual machine."), :label => _('CD-ROM drive'), :label_size => "col-md-2" } if new_vm %>
 
 <!--TODO # Move to a helper-->
 <% checked = params[:host] && params[:host][:compute_attributes] && params[:host][:compute_attributes][:start] || '1' %>
@@ -49,10 +48,11 @@ end %>
     vmExists: !new_vm,
     controllerTypes: compute_resource.scsi_controller_types,
     diskModeTypes: compute_resource.disk_mode_types,
-    storagePods: vsphere_storage_pods(compute_resource),
-    datastores: vsphere_datastores(compute_resource),
-    paramsScope: "#{f.object_name}[scsi_controllers]"
+    paramsScope: "#{f.object_name}[scsi_controllers]",
+    datastoresUrl: available_storage_domains_api_compute_resource_path(compute_resource),
+    storagePodsUrl: available_storage_pods_api_compute_resource_path(compute_resource)
   },
   volumes: f.object.volumes.map { |volume| volume.attributes.merge(:size_gb => volume.size_gb).deep_transform_keys { |key| key.to_s.camelize(:lower).to_sym }.reject { |k,v| k == :Size } },
-  controllers: f.object.scsi_controllers
+  controllers: f.object.scsi_controllers,
+  cluster: f.object.cluster.to_s
 }.to_json) %>

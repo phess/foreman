@@ -9,6 +9,7 @@ module Api
 
       api :GET, "/config_groups", N_("List of config groups")
       param_group :search_and_pagination, ::Api::V2::BaseController
+      add_scoped_search_description_for(ConfigGroup)
 
       def index
         @config_groups = resource_scope_for_index
@@ -40,7 +41,7 @@ module Api
       param_group :config_group
 
       def update
-        process_response @config_group.update_attributes(config_group_params)
+        process_response @config_group.update(config_group_params)
       end
 
       api :DELETE, "/config_groups/:id/", N_("Delete a config group")

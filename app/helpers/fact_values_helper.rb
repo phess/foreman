@@ -6,7 +6,7 @@ module FactValuesHelper
   end
 
   def fact_name(value, parent)
-    value_name = name = h(value.name)
+    value_name = name = value.name
     memo       = ''
     name.split(FactName::SEPARATOR).map do |current_name|
       memo = memo.empty? ? current_name : memo + FactName::SEPARATOR + current_name
@@ -48,5 +48,38 @@ module FactValuesHelper
   def fact_origin_icon(origin)
     return origin if origin == 'N/A'
     image_tag(origin + ".png", :title => origin)
+  end
+
+  def fact_breadcrumbs
+    breadcrumbs(
+      items: [
+        {
+          caption: _("Facts Values"),
+          url: (url_for(fact_values_path) if authorized_for(hash_for_fact_values_path))
+        },
+        {
+          caption: params[:host_id]
+        }
+      ],
+      resource_url: api_hosts_path(thin: true),
+      switcher_item_url: host_facts_path(':name'),
+      switchable: true
+    )
+  end
+
+  def is_escaped_value(value)
+    value != CGI.escapeHTML(value)
+  end
+
+  def escaped_warning_title
+    _("contains special characters")
+  end
+
+  def escaped_warning_context
+    _("Search may fail or give you wrong results since it contains special characters that are query keywords such as < and >")
+  end
+
+  def print_escape_warning(column)
+    fact_contains_escaped_values
   end
 end

@@ -7,11 +7,24 @@ class FactValue < ApplicationRecord
   delegate :name, :short_name, :compose, :origin, :to => :fact_name
   has_many :hostgroup, :through => :host
 
-  has_one :parent_fact_name, :through => :fact_name, :source => :parent
+  has_one :parent_fact_name, :through => :fact_name, :source => :parent, :class_name => 'FactName'
 
-  scoped_search :on => :value, :in_key=> :fact_name, :on_key=> :name, :rename => :facts, :complete_value => true, :only_explicit => true, :ext_method => :search_cast_facts
+  if SETTINGS[:locations_enabled]
+    has_one :location, :through => :host
+    scoped_search :relation => :location, :on => :name, :rename => :location, :complete_value => true, :only_explicit => true
+    scoped_search :relation => :location, :on => :id, :rename => :location_id, :complete_enabled => false, :only_explicit => true, :validator => ScopedSearch::Validators::INTEGER
+  end
+  if SETTINGS[:organizations_enabled]
+    has_one :organization, :through => :host
+    scoped_search :relation => :organization, :on => :name, :rename => :organization, :complete_value => true, :only_explicit => true
+    scoped_search :relation => :organization, :on => :id, :rename => :organization_id, :complete_enabled => false, :only_explicit => true, :validator => ScopedSearch::Validators::INTEGER
+  end
+
+  scoped_search :on => :value, :in_key => :fact_name, :on_key => :name, :rename => :facts, :complete_value => true, :only_explicit => true, :ext_method => :search_cast_facts
   scoped_search :on => :value, :default_order => true, :ext_method => :search_value_cast_facts
   scoped_search :on => :updated_at, :rename => :reported_at, :only_explicit => true, :complete_value => true
+  scoped_search :on => :host_id, :only_explicit => true, :complete_value => false
+
   scoped_search :relation => :fact_name, :on => :name, :complete_value => true, :aliases => ["fact"]
   scoped_search :relation => :host,      :on => :name, :complete_value => true, :rename => :host, :ext_method => :search_by_host_or_hostgroup, :only_explicit => true
   scoped_search :relation => :hostgroup, :on => :name, :complete_value => true, :rename => :"host.hostgroup", :ext_method => :search_by_host_or_hostgroup, :only_explicit => true
@@ -19,10 +32,10 @@ class FactValue < ApplicationRecord
   scoped_search :relation => :fact_name, :on => :type, :complete_value => false, :only_explicit => true, :aliases => ["origin"]
 
   scope :no_timestamp_facts, lambda {
-    joins(:fact_name).where("fact_names.name <> ?",:_timestamp)
+    joins(:fact_name).where("fact_names.name <> ?", :_timestamp)
   }
   scope :timestamp_facts, lambda {
-    joins(:fact_name).where("fact_names.name = ?",:_timestamp)
+    joins(:fact_name).where("fact_names.name = ?", :_timestamp)
   }
   scope :my_facts, lambda {
     if !User.current.admin? || Organization.expand(Organization.current).present? || Location.expand(Location.current).present?
@@ -35,11 +48,12 @@ class FactValue < ApplicationRecord
   scope :with_roots, -> { joins(:fact_name) }
   scope :root_only, -> { with_roots.where(:fact_names => {:ancestry => nil}) }
 
+  validates_lengths_from_database
   validates :fact_name_id, :uniqueness => { :scope => :host_id }
 
   def self.search_by_host_or_hostgroup(key, operator, value)
-    host_or_hg = key == 'host.hostgroup' ? 'hostgroup' : 'host'
-    search_term = value =~ /\A\d+\Z/ ? 'id' : 'name'
+    host_or_hg = (key == 'host.hostgroup') ? 'hostgroup' : 'host'
+    search_term = (value =~ /\A\d+\Z/) ? 'id' : 'name'
     conditions = sanitize_sql_for_conditions(["#{host_or_hg.pluralize}.#{search_term} #{operator} ?", value_to_sql(operator, value)])
     { :joins => host_or_hg.to_sym, :conditions => conditions }
   end
@@ -63,7 +77,7 @@ class FactValue < ApplicationRecord
   # returns the sum of each value, e.g. how many machines with 2,4...n cpu's
   def self.count_each(fact, options = {})
     output = []
-    where({:fact_names => {:name => fact}}).joins(:fact_name).group(:value).count.each do |k,v|
+    where({:fact_names => {:name => fact}}).joins(:fact_name).group(:value).count.each do |k, v|
       label = case options[:unit]
                 when String
                   _(options[:unit]) % k
@@ -73,7 +87,7 @@ class FactValue < ApplicationRecord
                 else
                   k
               end
-      output << {:label => label, :data =>v } unless v == 0
+      output << {:label => label, :data => v } unless v == 0
     end
     output
   end

@@ -3,8 +3,8 @@ class NXOS < Operatingsystem
   PXEFILES = {}
 
   # Simple output of the media url
-  def mediumpath(host)
-    medium_uri(host).to_s
+  def mediumpath(medium_provider)
+    medium_provider.medium_uri.to_s
   end
 
   def template_kinds
@@ -24,14 +24,14 @@ class NXOS < Operatingsystem
   end
 
   def boot_filename(host = nil)
-    "poap.cfg/"+host.mac.gsub(/:/,"").upcase
+    "poap.cfg/" + host.mac.delete(':').upcase
   end
 
-  def kernel(arch)
+  def kernel(_medium_provider)
     "none"
   end
 
-  def initrd(arch)
+  def initrd(_medium_provider)
     "none"
   end
 
@@ -47,7 +47,7 @@ class NXOS < Operatingsystem
 
   # generate a Cisco release number using release_name as an auxiliary field
   def release
-    "#{major}#{('.' + minor.to_s) unless minor.blank?}#{('.' + release_name) unless release_name.blank?}"
+    "#{major}#{('.' + minor.to_s) if minor.present?}#{('.' + release_name) if release_name.present?}"
   end
 
   def display_family

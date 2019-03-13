@@ -1,4 +1,5 @@
 class Environment < ApplicationRecord
+  audited
   extend FriendlyId
   friendly_id :name, :reserved_words => []
   include Taxonomix
@@ -29,7 +30,7 @@ class Environment < ApplicationRecord
   scoped_search :on => :name, :complete_value => :true
 
   class << self
-    #TODO: this needs to be removed, as PuppetDOC generation no longer works
+    # TODO: this needs to be removed, as PuppetDOC generation no longer works
     # if the manifests are not on the foreman host
     # returns an hash of all puppet environments and their relative paths
     def puppetEnvs(proxy = nil)

@@ -1,25 +1,28 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import helpers from '../../common/helpers';
-import PieChart from '../common/charts/PieChart/';
-import {
-  getLargePieChartConfig,
-  navigateToSearch
-} from '../../../services/ChartService';
-import ChartModal from './ChartModal';
+import { Panel } from 'react-bootstrap';
+import { Modal } from 'patternfly-react';
+import { isEqual } from 'lodash';
+import classNames from 'classnames';
+import { bindMethods } from '../../common/helpers';
+import DonutChart from '../common/charts/DonutChart';
+import BarChart from '../common/charts/BarChart';
+import { navigateToSearch } from '../../../services/charts/DonutChartService';
 import Loader from '../common/Loader';
-import Panel from '../common/Panel/Panel';
-import PanelHeading from '../common/Panel/PanelHeading';
-import PanelTitle from '../common/Panel/PanelTitle';
-import PanelBody from '../common/Panel/PanelBody';
-import './StatisticsChartsListStyles.css';
 import MessageBox from '../common/MessageBox';
+import { translate as __ } from '../../common/I18n';
 
 class ChartBox extends React.Component {
   constructor(props) {
     super(props);
     this.state = { showModal: false };
-    helpers.bindMethods(this, ['onClick', 'closeModal', 'openModal']);
+    bindMethods(this, ['onClick', 'closeModal', 'openModal']);
+  }
+  shouldComponentUpdate(nextProps, nextState) {
+    return (
+      !isEqual(this.props.chart, nextProps.chart) ||
+      !isEqual(this.state, nextState)
+    );
   }
 
   onClick() {
@@ -35,71 +38,108 @@ class ChartBox extends React.Component {
   }
 
   render() {
-    const { chart } = this.props;
-
-    const modalConfig = getLargePieChartConfig({
-      data: this.props.chart.data,
-      id: chart.id + 'Modal'
-    });
-
-    const tooltip = {
-      onClick: this.onClick,
-      title: this.props.tip,
-      'data-toggle': 'tooltip',
-      'data-placement': 'top'
+    const { chart, type, config, title, status, className } = this.props;
+    const components = {
+      donut: DonutChart,
+      bar: BarChart,
     };
-    const onclickChartClicked = chart.search && chart.search.match(/=$/) ?
-      null :
-      navigateToSearch.bind(null, chart.search);
+    const Chart = components[type];
+    const dataFiltered = chart.data && chart.data.filter(arr => arr[1] !== 0);
+    const hasChartData = dataFiltered && dataFiltered.length > 0;
+    const headerProps = hasChartData
+      ? {
+          onClick: this.onClick,
+          title: this.props.tip,
+          'data-toggle': 'tooltip',
+          'data-placement': 'top',
+        }
+      : {};
+    const handleChartClick =
+      chart.search && chart.search.match(/=$/)
+        ? null
+        : navigateToSearch.bind(null, chart.search);
+    const chartProps = {
+      data: chart.data ? chart.data : undefined,
+      key: `${chart.id}-chart`,
+      onclick: handleChartClick,
+    };
 
-    const _chart = (
-      <PieChart
-        key={this.props.chart.id + '-chart'}
-        data={this.props.chart.data}
-        onclick={onclickChartClicked}
-      />
+    const barChartProps = {
+      ...chartProps,
+      xAxisLabel: chart.xAxisLabel,
+      yAxisLabel: chart.yAxisLabel,
+    };
+
+    const chartPropsForType = {
+      donut: chartProps,
+      bar: barChartProps,
+    };
+
+    const panelChart = (
+      <Chart {...chartPropsForType[type]} config={this.props.config} />
     );
-
     const error = (
       <MessageBox
         msg={this.props.errorText}
-        key={this.props.chart.id + '-error'}
+        key={`${this.props.chart.id}-error`}
         icontype="error-circle-o"
       />
     );
+    const boxHeader = (
+      <h3 className="pointer panel-title" {...headerProps}>
+        {title}
+      </h3>
+    );
 
     return (
-      <Panel className="statistics-charts-list-panel" key={this.props.chart.id}>
-        <PanelHeading {...tooltip} className="statistics-charts-list-heading">
-          <PanelTitle text={this.props.title} />
-        </PanelHeading>
-
-        <PanelBody className="statistics-charts-list-body">
-          <Loader status={this.props.status}>
-            {[_chart, error]}
-          </Loader>
-
-          <ChartModal
-            {...this.props}
-            show={this.state.showModal}
-            onHide={this.closeModal}
-            onEnter={this.onEnter}
-            config={modalConfig}
-            title={this.props.title}
-          />
-        </PanelBody>
+      <Panel
+        className={classNames('chart-box', className)}
+        header={boxHeader}
+        key={chart.id}
+      >
+        <Panel.Heading>{boxHeader}</Panel.Heading>
+        <Panel.Body>
+          <Loader status={status}>{[panelChart, error]}</Loader>
+          {this.state.showModal && (
+            <Modal
+              show={this.state.showModal}
+              enforceFocus
+              onHide={this.closeModal}
+            >
+              <Modal.Header closeButton>
+                <Modal.Title>{title}</Modal.Title>
+              </Modal.Header>
+              <Modal.Body>
+                <Chart {...chartProps} config={config} />
+              </Modal.Body>
+            </Modal>
+          )}
+        </Panel.Body>
       </Panel>
     );
   }
 }
 
-ChartBox.PropTypes = {
+ChartBox.propTypes = {
   status: PropTypes.string.isRequired,
-  config: PropTypes.object,
-  modalConfig: PropTypes.object,
-  id: PropTypes.string.isRequired,
+  title: PropTypes.node,
+  className: PropTypes.string,
+  config: PropTypes.string,
   noDataMsg: PropTypes.string,
-  errorText: PropTypes.string
+  errorText: PropTypes.string,
+  type: PropTypes.oneOf(['donut', 'bar']).isRequired,
+  chart: PropTypes.object,
+  tip: PropTypes.string,
+};
+
+ChartBox.defaultProps = {
+  title: '',
+  className: '',
+  config: 'regular',
+  noDataMsg: __('No data available'),
+  errorText: '',
+  chart: {},
+  tip: '',
 };
 
 export default ChartBox;

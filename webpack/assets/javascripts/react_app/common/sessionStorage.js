@@ -1,7 +1,7 @@
 if (!window.sessionStorage) {
   window.sessionStorage = {
     getItem: () => {},
-    setItem: () => {}
+    setItem: () => {},
   };
 }
 
@@ -11,9 +11,8 @@ const getValue = key => {
   return JSON.parse(value);
 };
 
-const setValue = (key, value) => {
-  return window.sessionStorage.setItem(key, JSON.stringify(value));
-};
+const setValue = (key, value) =>
+  window.sessionStorage.setItem(key, JSON.stringify(value));
 
 export const notificationsDrawer = {
   getIsOpened: () => getValue('isDrawerOpen'),
@@ -21,5 +20,5 @@ export const notificationsDrawer = {
   getExpandedGroup: () => getValue('expandedGroup'),
   setExpandedGroup: value => setValue('expandedGroup', value),
   getHasUnreadMessages: () => getValue('hasUnreadMessages'),
-  setHasUnreadMessages: value => setValue('hasUnreadMessages', value)
+  setHasUnreadMessages: value => setValue('hasUnreadMessages', value),
 };

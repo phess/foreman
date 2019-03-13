@@ -55,7 +55,7 @@ module Orchestration::DNS
   end
 
   def queue_dns
-    return unless (dns? || dns6? || reverse_dns? || reverse_dns6?) && errors.empty?
+    return log_orchestration_errors unless (dns? || dns6? || reverse_dns? || reverse_dns6?) && errors.empty?
     queue_remove_dns_conflicts if overwrite?
     new_record? ? queue_dns_create : queue_dns_update
   end
@@ -63,16 +63,20 @@ module Orchestration::DNS
   def queue_dns_create
     logger.debug "Scheduling new DNS entries"
     DnsInterface::RECORD_TYPES.each do |record_type|
-      queue.create(:name   => _("Create %{type} for %{host}") % {:host => self, :type => dns_class(record_type).human}, :priority => 10,
-                   :action => [self, :set_dns_record, record_type]) if dns_feasible?(record_type)
+      if dns_feasible?(record_type)
+        queue.create(:name   => _("Create %{type} for %{host}") % {:host => self, :type => dns_class(record_type).human}, :priority => 10,
+                     :action => [self, :set_dns_record, record_type])
+      end
     end
   end
 
   def queue_dns_update
     return unless pending_dns_record_changes?
     DnsInterface::RECORD_TYPES.each do |record_type|
-      queue.create(:name   => _("Remove %{type} for %{host}") % {:host => old, :type => dns_class(record_type).human }, :priority => 9,
-                   :action => [old, :del_dns_record, record_type]) if old.dns_feasible?(record_type)
+      if old.dns_feasible?(record_type)
+        queue.create(:name   => _("Remove %{type} for %{host}") % {:host => old, :type => dns_class(record_type).human }, :priority => 9,
+                     :action => [old, :del_dns_record, record_type])
+      end
     end
     queue_dns_create
   end
@@ -80,8 +84,10 @@ module Orchestration::DNS
   def queue_dns_destroy
     return unless errors.empty?
     DnsInterface::RECORD_TYPES.each do |record_type|
-      queue.create(:name   => _("Remove %{type} for %{host}") % {:host => self, :type => dns_class(record_type).human}, :priority => 1,
-                   :action => [self, :del_dns_record, record_type]) if dns_feasible?(record_type)
+      if dns_feasible?(record_type)
+        queue.create(:name   => _("Remove %{type} for %{host}") % {:host => self, :type => dns_class(record_type).human}, :priority => 1,
+                     :action => [self, :del_dns_record, record_type])
+      end
     end
   end
 
@@ -90,8 +96,10 @@ module Orchestration::DNS
     return unless overwrite?
     logger.debug "Scheduling DNS conflict removal"
     DnsInterface::RECORD_TYPES.each do |record_type|
-      queue.create(:name   => _("Remove conflicting %{type} for %{host}") % {:host => self, :type => dns_class(record_type).human}, :priority => 0,
-                   :action => [self, :del_conflicting_dns_record, record_type]) if dns_feasible?(record_type) && dns_record(record_type) && dns_record(record_type).conflicting?
+      if dns_feasible?(record_type) && dns_record(record_type) && dns_record(record_type).conflicting?
+        queue.create(:name   => _("Remove conflicting %{type} for %{host}") % {:host => self, :type => dns_class(record_type).human}, :priority => 0,
+                     :action => [self, :del_conflicting_dns_record, record_type])
+      end
     end
   end
 
@@ -113,7 +121,7 @@ module Orchestration::DNS
         status = failure(_("%{type} %{conflicts} already exists") % {:conflicts => conflicts.to_sentence, :type => dns_class(record_type).human(conflicts.count)}, nil, :conflict)
       end
     end
-    !status #failure method returns 'false'
+    !status # failure method returns 'false'
   rescue Net::Error => e
     if domain.nameservers.empty?
       failure(_("Error connecting to system DNS server(s) - check /etc/resolv.conf"), e)

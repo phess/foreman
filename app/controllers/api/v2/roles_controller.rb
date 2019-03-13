@@ -8,6 +8,7 @@ module Api
 
       api :GET, "/roles/", N_("List all roles")
       param_group :search_and_pagination, ::Api::V2::BaseController
+      add_scoped_search_description_for(Role)
 
       def index
         params[:order] ||= 'name'
@@ -42,7 +43,7 @@ module Api
       param_group :role
 
       def update
-        process_response @role.update_attributes(role_params)
+        process_response @role.update(role_params)
       end
 
       api :DELETE, "/roles/:id/", N_("Delete a role")

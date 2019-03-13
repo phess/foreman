@@ -8,13 +8,17 @@ module Nic
     include InterfaceCloning
 
     include Exportable
-    include Foreman::Renderer
 
     before_validation :set_provisioning_flag
     after_save :update_lookup_value_fqdn_matchers, :drop_host_cache
 
     validates :ip, :belongs_to_subnet => {:subnet => :subnet }, :if => ->(nic) { nic.managed? }
     validates :ip6, :belongs_to_subnet => {:subnet => :subnet6 }, :if => ->(nic) { nic.managed? }
+
+    validates :compute_resource, :belongs_to_host_taxonomy => { :taxonomy => :organization },
+              :if => ->(nic) { nic.host.respond_to?(:compute_resource) }
+    validates :compute_resource, :belongs_to_host_taxonomy => { :taxonomy => :location },
+              :if => ->(nic) { nic.host.respond_to?(:compute_resource) }
 
     # Interface normally are not executed by them self, so we use the host queue and related methods.
     # this ensures our orchestration works on both a host and a managed interface
@@ -31,17 +35,16 @@ module Nic
 
     # this ensures we can create an interface even when there is no host queue
     # e.g. outside to Host nested attributes
-    def queue_with_host
-      if host && host.respond_to?(:queue)
+    def queue
+      if host&.respond_to?(:queue)
         host.queue
       else
-        queue_without_host
+        super
       end
     end
-    alias_method_chain :queue, :host
 
     def progress_report_id
-      if host && host.respond_to?(:progress_report_id)
+      if host&.respond_to?(:progress_report_id)
         host.progress_report_id
       else
         super
@@ -49,7 +52,7 @@ module Nic
     end
 
     def progress_report_id=(value)
-      if host && host.respond_to?(:progress_report_id=)
+      if host&.respond_to?(:progress_report_id=)
         host.progress_report_id = value
       else
         super
@@ -94,9 +97,9 @@ module Nic
 
     def update_lookup_value_fqdn_matchers
       return unless primary?
-      return unless fqdn_changed?
+      return unless saved_change_to_fqdn?
       return unless host.present?
-      LookupValue.where(:match => "fqdn=#{fqdn_was}").
+      LookupValue.where(:match => "fqdn=#{fqdn_before_last_save}").
         update_all(:match => host.lookup_value_match)
     end
 

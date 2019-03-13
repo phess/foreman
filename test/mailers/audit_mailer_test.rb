@@ -1,14 +1,14 @@
 require 'test_helper'
 require 'cgi'
 
-class AuditMailerTest <ActionMailer::TestCase
+class AuditMailerTest < ActionMailer::TestCase
   def setup
     disable_orchestration
     # Add 'update' action to audits
-    @audit = FactoryGirl.create(:audit)
+    @audit = FactoryBot.create(:audit)
     as_admin do
       # Add 'create' action to audits
-      @host = FactoryGirl.create(:host)
+      @host = FactoryBot.create(:host)
     end
     @options = {}
     @options[:env] = @env
@@ -36,7 +36,7 @@ class AuditMailerTest <ActionMailer::TestCase
   test 'Audit mail should display total count of audits' do
     @options[:time] = '1973-01-13 00:12'
     count = Audit.all.count
-    number_of = Setting[:entries_per_page] > count ? count : Setting[:entries_per_page]
+    number_of = (Setting[:entries_per_page] > count) ? count : Setting[:entries_per_page]
     assert_includes(AuditMailer.summary(@options).deliver_now.body.parts.first.body, "Displaying #{number_of} of #{count} audits")
   end
 
@@ -45,5 +45,17 @@ class AuditMailerTest <ActionMailer::TestCase
     @options[:query] = 'action = create'
     query_should_be = CGI.escape(%(#{@options[:query]} and time >= "#{@options[:time]}"))
     assert_includes(AuditMailer.summary(@options).deliver_now.body.parts.last.body, query_should_be)
+  end
+
+  test 'Audit html mail should include correct id query' do
+    @options[:query] = 'id = 21'
+    query_should_be = CGI.escape(@options[:query])
+    assert_includes(AuditMailer.summary(@options).deliver_now.body.parts.last.body, query_should_be)
+  end
+
+  test "Audit template change should not crash" do
+    template = FactoryBot.create(:provisioning_template, :template => 'aaaa', :name => 'audited ptable', :snippet => true)
+    template.update(:template => 'bbbbbb')
+    assert_includes(AuditMailer.summary(@options).deliver_now.body.parts.last.body, 'Template content changed')
   end
 end

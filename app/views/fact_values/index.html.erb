@@ -1,7 +1,6 @@
-<%= javascript 'charts' %>
 <%
 if params[:host_id].present?
-  title(_("Fact Values | %{host_name}") % {:host_name => params[:host_id]})
+  fact_breadcrumbs
 else
   title(_("Fact Values"))
 end

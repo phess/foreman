@@ -1,4 +1,5 @@
 class ComputeResource < ApplicationRecord
+  audited :except => [:attrs]
   include Taxonomix
   include Encryptable
   include Authorizable
@@ -7,9 +8,9 @@ class ComputeResource < ApplicationRecord
 
   validates_lengths_from_database
 
-  audited :except => [:password, :attrs]
   serialize :attrs, Hash
   has_many :trends, :as => :trendable, :class_name => "ForemanTrend"
+  belongs_to :http_proxy
 
   before_destroy EnsureNotUsedBy.new(:hosts)
   validates :name, :presence => true, :uniqueness => true
@@ -20,6 +21,7 @@ class ComputeResource < ApplicationRecord
   scoped_search :on => :id, :complete_enabled => false, :only_explicit => true, :validator => ScopedSearch::Validators::INTEGER
   before_save :sanitize_url
   has_many_hosts
+  has_many :hostgroups
   has_many :images, :dependent => :destroy
   before_validation :set_attributes_hash
   has_many :compute_attributes, :dependent => :destroy
@@ -49,9 +51,8 @@ class ComputeResource < ApplicationRecord
   end
 
   def self.registered_providers
-    Foreman::Plugin.all.map(&:compute_resources).inject({}) do |prov_hash, providers|
+    Foreman::Plugin.all.map(&:compute_resources).each_with_object({}) do |providers, prov_hash|
       providers.each { |provider| prov_hash.update(provider.split('::').last => provider) }
-      prov_hash
     end
   end
 
@@ -120,6 +121,10 @@ class ComputeResource < ApplicationRecord
 
   def to_label
     "#{name} (#{provider_friendly_name})"
+  end
+
+  def connection_options
+    http_proxy ? {:proxy => http_proxy.full_url} : {}
   end
 
   # Override this method to specify provider name
@@ -198,14 +203,14 @@ class ComputeResource < ApplicationRecord
   end
 
   def provider
-    read_attribute(:type).to_s.split('::').last
+    self[:type].to_s.split('::').last
   end
 
   def provider=(value)
     if self.class.providers.include? value
       self.type = self.class.provider_class(value)
     else
-      self.type = value #this will trigger validation error since value is one of supported_providers
+      self.type = value # this will trigger validation error since value is one of supported_providers
       logger.debug("unknown provider for compute resource")
     end
   end
@@ -217,7 +222,7 @@ class ComputeResource < ApplicationRecord
   def templates(opts = {})
   end
 
-  def template(id,opts = {})
+  def template(id, opts = {})
   end
 
   def update_required?(old_attrs, new_attrs)
@@ -242,6 +247,14 @@ class ComputeResource < ApplicationRecord
     false
   end
 
+  def storage_domain(storage_domain)
+    raise ::Foreman::Exception.new(N_("Not implemented for %s"), provider_friendly_name)
+  end
+
+  def storage_pod(storage_pod)
+    raise ::Foreman::Exception.new(N_("Not implemented for %s"), provider_friendly_name)
+  end
+
   def available_zones
     raise ::Foreman::Exception.new(N_("Not implemented for %s"), provider_friendly_name)
   end
@@ -250,7 +263,7 @@ class ComputeResource < ApplicationRecord
     []
   end
 
-  def available_networks
+  def available_networks(cluster_id = nil)
     raise ::Foreman::Exception.new(N_("Not implemented for %s"), provider_friendly_name)
   end
 
@@ -274,11 +287,11 @@ class ComputeResource < ApplicationRecord
     raise ::Foreman::Exception.new(N_("Not implemented for %s"), provider_friendly_name)
   end
 
-  def available_storage_domains(storage_domain = nil)
+  def available_storage_domains(cluster_id = nil)
     raise ::Foreman::Exception.new(N_("Not implemented for %s"), provider_friendly_name)
   end
 
-  def available_storage_pods(storage_pod = nil)
+  def available_storage_pods(cluster_id = nil)
     raise ::Foreman::Exception.new(N_("Not implemented for %s"), provider_friendly_name)
   end
 
@@ -309,11 +322,11 @@ class ComputeResource < ApplicationRecord
     self.attrs[:setpw] = nil
   end
 
-  # this method is overwritten for Libvirt
+  # this method is overwritten for Libvirt & VMWare
   def display_type=(_)
   end
 
-  # this method is overwritten for Libvirt
+  # this method is overwritten for Libvirt & VMWare
   def display_type
     nil
   end
@@ -337,7 +350,7 @@ class ComputeResource < ApplicationRecord
 
   def vm_compute_attributes(vm)
     vm_attrs = vm.attributes rescue {}
-    vm_attrs = vm_attrs.reject{|k,v| k == :id }
+    vm_attrs = vm_attrs.reject {|k, v| k == :id }
 
     vm_attrs = set_vm_volumes_attributes(vm, vm_attrs)
     vm_attrs
@@ -355,7 +368,29 @@ class ComputeResource < ApplicationRecord
     true
   end
 
+  def supports_host_association?
+    respond_to?(:associated_host)
+  end
+
+  def normalize_vm_attrs(vm_attrs)
+    vm_attrs
+  end
+
   protected
+
+  def memory_gb_to_bytes(memory_size)
+    memory_size.to_s.gsub(/[^0-9]/, '').to_i * 1.gigabyte
+  end
+
+  def to_bool(value)
+    ['1', 'true'].include?(value.to_s.downcase) unless value.nil?
+  end
+
+  def slice_vm_attributes(vm_attrs, fields)
+    fields.inject({}) do |slice, f|
+      slice.merge({f => (vm_attrs[f].to_s.empty? ? nil : vm_attrs[f])})
+    end
+  end
 
   def client
     raise ::Foreman::Exception.new N_("Not implemented")
@@ -372,12 +407,14 @@ class ComputeResource < ApplicationRecord
 
   def nested_attributes_for(type, opts)
     return [] unless opts
-    opts = opts.dup #duplicate to prevent changing the origin opts.
+    opts = opts.to_hash if opts.class == ActionController::Parameters
+
+    opts = opts.dup # duplicate to prevent changing the origin opts.
     opts.delete("new_#{type}") || opts.delete("new_#{type}".to_sym) # delete template
     # convert our options hash into a sorted array (e.g. to preserve nic / disks order)
-    opts = opts.sort { |l, r| l[0].to_s.sub('new_','').to_i <=> r[0].to_s.sub('new_','').to_i }.map { |e| Hash[e[1]] }
+    opts = opts.sort { |l, r| l[0].to_s.sub('new_', '').to_i <=> r[0].to_s.sub('new_', '').to_i }.map { |e| Hash[e[1]] }
     opts.map do |v|
-      if v[:"_delete"] == '1' && v[:id].blank?
+      if v[:_delete] == '1' && v[:id].blank?
         nil
       else
         v.deep_symbolize_keys # convert to symbols deeper hashes

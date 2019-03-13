@@ -16,6 +16,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 class Role < ApplicationRecord
+  audited
   include Authorizable
   include ScopedSearchExtensions
   extend FriendlyId
@@ -27,11 +28,11 @@ class Role < ApplicationRecord
   MANAGER = 'Manager'
   ORG_ADMIN = 'Organization admin'
   VIEWER = 'Viewer'
+  SYSTEM_ADMIN = 'System admin'
 
-  audited
   has_associated_audits
   scope :givable, -> { where(:builtin => 0).order(:name) }
-  scope :for_current_user, -> { User.current.admin? ? where('0 = 0') : where(:id => User.current.role_ids) }
+  scope :for_current_user, -> { User.current.can_escalate? ? givable : givable.where(:id => User.current.cached_role_ids) }
   scope :builtin, lambda { |*args|
     compare = 'not' if args.first
     where("#{compare} builtin = 0")
@@ -97,8 +98,12 @@ class Role < ApplicationRecord
     def default
       default_role = find_by_builtin(BUILTIN_DEFAULT_ROLE)
       if default_role.nil?
-        opts = { :name => 'Default role', :builtin => BUILTIN_DEFAULT_ROLE }
-        default_role = create! opts
+        Role.without_auditing do
+          Role.skip_permission_check do
+            opts = { :name => 'Default role', :builtin => BUILTIN_DEFAULT_ROLE }
+            default_role = create! opts
+          end
+        end
         raise ::Foreman::Exception.new(N_("Unable to create the default role.")) if default_role.new_record?
       end
       default_role
@@ -157,6 +162,7 @@ class Role < ApplicationRecord
         filtering = filter.filterings.build
         filtering.filter = filter
         filtering.permission = permission
+        filtering.save! if options[:save!]
       end
     end
   end
@@ -197,8 +203,8 @@ class Role < ApplicationRecord
     permission_names - current_names
   end
 
-  def add_permissions!(*args)
-    add_permissions(*args)
+  def add_permissions!(permissions, opts = {})
+    add_permissions(permissions, opts.merge(:save! => true))
     save!
   end
 
@@ -215,6 +221,7 @@ class Role < ApplicationRecord
                                :include => [:locations, :organizations, { :filters => :permissions }])
     new_role.attributes = role_params
     new_role.cloned_from_id = self.id
+    new_role.filters = new_role.filters.select {|f| f.filterings.present? }
     new_role
   end
 
@@ -267,7 +274,12 @@ class Role < ApplicationRecord
   private
 
   def sync_inheriting_filters
-    self.filters.where(:override => false).each { |f| f.inherit_taxonomies! }
+    self.filters.where(:override => false).find_each do |f|
+      unless f.save
+        errors.add :base, N_('One or more of the associated filters are invalid which prevented the role to be saved')
+        raise ActiveRecord::Rollback, N_("Unable to submit role: Problem with associated filter %s") % f.errors
+      end
+    end
   end
 
   def allowed_permissions
@@ -279,8 +291,10 @@ class Role < ApplicationRecord
   end
 
   def check_deletable
-    errors.add(:base, _("Cannot delete built-in role")) if builtin?
-    errors.empty?
+    if builtin?
+      errors.add(:base, _("Cannot delete built-in role"))
+      throw :abort
+    end
   end
 
   def not_locked
@@ -288,9 +302,11 @@ class Role < ApplicationRecord
     errors.empty?
   end
 
-  def find_filter(resource_type, current_filters, search)
-    Filter.where(:search => search, :role_id => id).joins(:permissions)
-          .where("permissions.resource_type" => resource_type).first
+  def find_filter(resource_type, current_filters, search = :skip)
+    filter = Filter.where(:role_id => id).joins(:permissions)
+          .where("permissions.resource_type" => resource_type)
+    filter = filter.where(search: search) unless search == :skip
+    filter.first
   end
 
   def filter_for_permission_add(resource_type, current_filters, search)
@@ -304,7 +320,7 @@ class Role < ApplicationRecord
   end
 
   def filter_for_permissions_remove(resource_type, current_filters)
-    filter_record = find_filter resource_type, current_filters, nil
+    filter_record = find_filter resource_type, current_filters
     find_current_filter current_filters, filter_record
   end
 
@@ -313,8 +329,16 @@ class Role < ApplicationRecord
   end
 
   def permission_records(permissions)
-    collection = Permission.where(:name => permissions).all
-    raise ::Foreman::PermissionMissingException.new(N_('some permissions were not found')) if collection.size != permissions.size
+    perms = permissions.flatten
+    collection = Permission.where(:name => perms).all
+    if collection.size != perms.size
+      raise ::Foreman::PermissionMissingException.new(N_("some permissions were not found: %s"),
+                                                      not_found_permissions(collection.pluck(:name), perms))
+    end
     collection
+  end
+
+  def not_found_permissions(first, second)
+    (first - second) | (second - first)
   end
 end

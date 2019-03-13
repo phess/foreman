@@ -1,11 +1,11 @@
 class Medium < ApplicationRecord
+  audited
   include Authorizable
   extend FriendlyId
   friendly_id :name
   include Taxonomix
   include ValidateOsFamily
   include Parameterizable::ByIdName
-  audited
 
   validates_lengths_from_database
 
@@ -16,7 +16,7 @@ class Medium < ApplicationRecord
   has_many :hostgroups, :dependent => :nullify
 
   # We need to include $ in this as $arch, $release, can be in this string
-  VALID_NFS_PATH=/\A([-\w\d\.]+):(\/[\w\d\/\$\.]+)\Z/
+  VALID_NFS_PATH = /\A([-\w\d\.]+):(\/[\w\d\/\$\.]+)\Z/
   validates :name, :uniqueness => true, :presence => true
   validates :path, :uniqueness => true, :presence => true,
     :url_schema => ['http', 'https', 'ftp', 'nfs']
@@ -55,7 +55,7 @@ class Medium < ApplicationRecord
 
   # Write the image path, with a trailing "/" if required
   def image_path=(path)
-    write_attribute :image_path, "#{path}#{'/' unless path =~ /\/$|^$/}"
+    self[:image_path] = "#{path}#{'/' unless path =~ /\/$|^$/}"
   end
 
   def ensure_hosts_not_in_build
@@ -64,6 +64,6 @@ class Medium < ApplicationRecord
       self.errors.add :base, _("%{record} is used by host in build mode %{what}") % { :record => self.name, :what => host.name }
     end
     Rails.logger.error "You may not destroy #{self.to_label} as it is used by hosts in build mode!"
-    false
+    throw :abort
   end
 end

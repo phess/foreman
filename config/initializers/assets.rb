@@ -1,3 +1,13 @@
+module Webpack
+  module Rails
+    class Manifest
+      class << self
+        attr_writer :manifest
+      end
+    end
+  end
+end
+
 # Be sure to restart your server when you modify this file.
 Foreman::Application.configure do |app|
   # Version of your assets, change this if you want to expire all your assets.
@@ -9,7 +19,6 @@ Foreman::Application.configure do |app|
 
   #  config.assets.precompile += %w()
   javascript = %w(compute_resource
-                  compute_resources/openstack/host_edit
                   compute_resources/libvirt/nic_info
                   compute_resources/ovirt/nic_info
                   compute_resources/vmware/nic_info
@@ -18,20 +27,6 @@ Foreman::Application.configure do |app|
                   host_edit_interfaces
                   hosts
                   host_checkbox
-                  nfs_visibility
-                  noVNC/base64
-                  noVNC/des
-                  noVNC/display
-                  noVNC/input
-                  noVNC/jsunzip
-                  noVNC/logo
-                  noVNC/playback
-                  noVNC/rfb
-                  noVNC/ui
-                  noVNC/util
-                  noVNC/websock
-                  noVNC/webutil
-                  noVNC
                   reports
                   spice
                   charts
@@ -40,19 +35,17 @@ Foreman::Application.configure do |app|
                   filters
                   class_edit
                   dashboard
-                  auth_source_ldap
                   subnets
                   hidden_values
-                  password_strength
                   proxy_status
                   about
                   parameter_override)
 
   javascript += FastGettext.default_available_locales.map { |loc| "locale/#{loc}/app" }
 
-  stylesheets = %w( unimported/email.css )
+  stylesheets = %w(unimported/email.css)
 
-  images = %w(editable/clear.png patternfly/bg-modal-about-pf.png )
+  images = %w(editable/clear.png patternfly/bg-modal-about-pf.png)
 
   # Add the fonts path
   config.assets.paths << Rails.root.join('vendor', 'assets', 'fonts')
@@ -71,7 +64,7 @@ Foreman::Application.configure do |app|
         # either with just the plugin name or with hyphens replaced with underscores.
         possible_manifests = [plugin.path, app.root].map do |root_dir|
           [File.join(root_dir, "public/assets/#{plugin.id}/#{plugin.id}.json"),
-           File.join(root_dir, "public/assets/#{plugin.id.to_s.gsub('-', '_')}/#{plugin.id.to_s.gsub('-', '_')}.json")]
+           File.join(root_dir, "public/assets/#{plugin.id.to_s.tr('-', '_')}/#{plugin.id.to_s.tr('-', '_')}.json")]
         end.flatten
 
         if (manifest_path = possible_manifests.detect { |path| File.file?(path) })
@@ -90,6 +83,36 @@ Foreman::Application.configure do |app|
         file.write(foreman_manifest.to_json)
         app.assets_manifest              = Sprockets::Manifest.new(app.assets, file.path)
         ActionView::Base.assets_manifest = app.assets_manifest
+      end
+    end
+
+    # When the dev server is enabled, this static manifest file is ignored and
+    # always retrieved from the dev server.
+    #
+    # Otherwise we need to combine all the chunks from the various webpack
+    # manifests. This is the main foreman manifest and all plugins that may
+    # have one. We then store this in the webpack-rails manifest using our
+    # monkey patched function.
+    unless config.webpack.dev_server.enabled
+      if (webpack_manifest_file = Dir.glob("#{Rails.root}/public/webpack/manifest.json").first)
+        webpack_manifest = JSON.parse(File.read(webpack_manifest_file))
+
+        Foreman::Plugin.with_webpack.each do |plugin|
+          manifest_path = plugin.webpack_manifest_path
+          next unless manifest_path
+
+          Rails.logger.debug { "Loading #{plugin.id} webpack asset manifest from #{manifest_path}" }
+          assets = JSON.parse(File.read(manifest_path))
+
+          plugin_id = plugin.id.to_s
+          assets['assetsByChunkName'].each do |chunk, filename|
+            if chunk == plugin_id || chunk.start_with?("#{plugin_id}:")
+              webpack_manifest['assetsByChunkName'][chunk] = filename
+            end
+          end
+        end
+
+        Webpack::Rails::Manifest.manifest = webpack_manifest
       end
     end
   end

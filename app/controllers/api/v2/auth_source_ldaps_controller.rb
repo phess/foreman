@@ -1,7 +1,6 @@
 module Api
   module V2
     class AuthSourceLdapsController < V2::BaseController
-      include Api::TaxonomyScope
       include Foreman::Controller::Parameters::AuthSourceLdap
 
       wrap_parameters AuthSourceLdap,
@@ -17,6 +16,7 @@ module Api
         N_('List LDAP authentication sources per organization')
       param_group :taxonomy_scope, ::Api::V2::BaseController
       param_group :search_and_pagination, ::Api::V2::BaseController
+      add_scoped_search_description_for(AuthSourceLdap)
 
       def index
         @auth_source_ldaps = resource_scope_for_index
@@ -65,7 +65,7 @@ module Api
       param_group :auth_source_ldap
 
       def update
-        process_response @auth_source_ldap.update_attributes(auth_source_ldap_params)
+        process_response @auth_source_ldap.update(auth_source_ldap_params)
       end
 
       api :PUT, "/auth_source_ldaps/:id/test/", N_("Test LDAP connection")

@@ -9,11 +9,11 @@ class HostsController < ApplicationController
   include Foreman::Controller::HostFormCommon
   include Foreman::Controller::Puppet::HostsControllerExtensions
   include Foreman::Controller::CsvResponder
-  include Foreman::Controller::NormalizeScsiAttributes
+  include Foreman::Controller::ConsoleCommon
 
-  SEARCHABLE_ACTIONS= %w[index active errors out_of_sync pending disabled ]
-  AJAX_REQUESTS=%w{compute_resource_selected current_parameters process_hostgroup process_taxonomy review_before_build scheduler_hint_selected}
-  BOOT_DEVICES={ :disk => N_('Disk'), :cdrom => N_('CDROM'), :pxe => N_('PXE'), :bios => N_('BIOS') }
+  SEARCHABLE_ACTIONS = %w[index active errors out_of_sync pending disabled]
+  AJAX_REQUESTS = %w{compute_resource_selected current_parameters process_hostgroup process_taxonomy review_before_build scheduler_hint_selected}
+  BOOT_DEVICES = { :disk => N_('Disk'), :cdrom => N_('CDROM'), :pxe => N_('PXE'), :bios => N_('BIOS') }
   MULTIPLE_ACTIONS = %w(multiple_parameters update_multiple_parameters select_multiple_hostgroup
                         update_multiple_hostgroup
                         multiple_destroy submit_multiple_destroy multiple_build
@@ -23,23 +23,16 @@ class HostsController < ApplicationController
                         rebuild_config submit_rebuild_config select_multiple_owner update_multiple_owner
                         select_multiple_power_state update_multiple_power_state)
 
-  HOST_POWER = {
-    :on =>  { :state => 'on', :title => N_('On') },
-    :off => { :state => 'off', :title => N_('Off') },
-    :na =>  { :state => 'na', :title => N_('N/A') }
-  }.freeze
-
-  before_action :ajax_request, :only => AJAX_REQUESTS + [:get_power_state]
+  before_action :ajax_request, :only => AJAX_REQUESTS
   before_action :find_resource, :only => [:show, :clone, :edit, :update, :destroy, :puppetrun, :review_before_build,
-                                          :setBuild, :cancelBuild, :power, :get_power_state, :overview, :bmc, :vm,
+                                          :setBuild, :cancelBuild, :power, :overview, :bmc, :vm,
                                           :runtime, :resources, :nics, :ipmi_boot, :console,
-                                          :toggle_manage, :pxe_config, :storeconfig_klasses, :disassociate]
+                                          :toggle_manage, :pxe_config, :disassociate, :build_errors]
 
   before_action :taxonomy_scope, :only => [:new, :edit] + AJAX_REQUESTS
   before_action :set_host_type, :only => [:update]
   before_action :find_multiple, :only => MULTIPLE_ACTIONS
   before_action :validate_power_action, :only => :update_multiple_power_state
-  before_action :normalize_vm_attributes, :only => [:create, :update, :process_taxonomy]
 
   helper :hosts, :reports, :interfaces
 
@@ -119,8 +112,8 @@ class HostsController < ApplicationController
     forward_url_options
     Taxonomy.no_taxonomy_scope do
       attributes = @host.apply_inherited_attributes(host_params)
-
-      if @host.update_attributes(attributes)
+      attributes.delete(:compute_resource_id)
+      if @host.update(attributes)
         process_success :success_redirect => host_path(@host)
       else
         taxonomy_scope
@@ -147,10 +140,14 @@ class HostsController < ApplicationController
   end
 
   def compute_resource_selected
-    return not_found unless (params[:host] && (id=params[:host][:compute_resource_id]))
+    return not_found unless params[:host]
     Taxonomy.as_taxonomy @organization, @location do
-      compute_profile_id = params[:host][:compute_profile_id] || Hostgroup.find_by_id(params[:host][:hostgroup_id]).try(:inherited_compute_profile_id)
-      compute_resource = ComputeResource.authorized(:view_compute_resources).find_by_id(id)
+      hostgroup = Hostgroup.find_by_id(params[:host][:hostgroup_id])
+      compute_resource_id = params[:host][:compute_resource_id] || hostgroup.try(:inherited_compute_resource_id)
+      return not_found if compute_resource_id.blank?
+      compute_profile_id = params[:host][:compute_profile_id] || hostgroup.try(:inherited_compute_profile_id)
+      compute_resource = ComputeResource.authorized(:view_compute_resources).find_by_id(compute_resource_id)
+      return not_found if compute_resource.blank?
       render :partial => "compute", :locals => { :compute_resource => compute_resource,
                                                  :vm_attrs         => compute_resource.compute_profile_attributes_for(compute_profile_id) }
     end
@@ -159,36 +156,31 @@ class HostsController < ApplicationController
   end
 
   def scheduler_hint_selected
-    return not_found unless (params[:host])
-    @host = Host.new(host_params)
+    return not_found unless params[:host]
+    refresh_host
     Taxonomy.as_taxonomy @organization, @location do
       render :partial => "compute_resources_vms/form/scheduler_hint_filters"
     end
   end
 
   def interfaces
-    @host = Host.new host_params
+    refresh_host
     @host.apply_compute_profile(InterfaceMerge.new)
 
     render :partial => "interfaces_tab"
   end
 
   def current_parameters
+    host = refresh_host
     Taxonomy.as_taxonomy @organization, @location do
-      render :partial => "common_parameters/inherited_parameters", :locals => {:inherited_parameters => refresh_host.host_inherited_params(true), :parameters => refresh_host.host_parameters}
+      render :partial => "common_parameters/inherited_parameters", :locals => {:inherited_parameters => host.inherited_params_hash, :parameters => host.host_parameters}
     end
   end
 
-  def puppetclass_parameters
-    Taxonomy.as_taxonomy @organization, @location do
-      render :partial => "puppetclasses/classes_parameters", :locals => { :obj => refresh_host}
-    end
-  end
-
-  #returns a yaml file ready to use for puppet external nodes script
-  #expected a fqdn parameter to provide hostname to lookup
-  #see example script in extras directory
-  #will return HTML error codes upon failure
+  # returns a yaml file ready to use for puppet external nodes script
+  # expected a fqdn parameter to provide hostname to lookup
+  # see example script in extras directory
+  # will return HTML error codes upon failure
 
   def externalNodes
     certname = params[:name].to_s
@@ -202,8 +194,10 @@ class HostsController < ApplicationController
     begin
       respond_to do |format|
         # don't break lines in yaml to support Ruby < 1.9.3
-        host_info_yaml = @host.info.to_yaml(:line_width => -1)
-        format.html { render :plain => "<pre>#{ERB::Util.html_escape(host_info_yaml)}</pre>" }
+        # Remove the HashesWithIndifferentAccess using 'deep_stringify_keys',
+        # then we turn it into YAML
+        host_info_yaml = @host.info.deep_stringify_keys.to_yaml(:line_width => -1)
+        format.html { render :html => "<pre>#{ERB::Util.html_escape(host_info_yaml)}</pre>".html_safe }
         format.yml { render :plain => host_info_yaml }
       end
     rescue => e
@@ -216,7 +210,7 @@ class HostsController < ApplicationController
   def puppetrun
     return deny_access unless Setting[:puppetrun]
     if @host.puppetrun!
-      notice _("Successfully executed, check log files for more details")
+      success _("Successfully executed, check log files for more details")
     else
       error @host.errors[:base].to_sentence
     end
@@ -238,15 +232,15 @@ class HostsController < ApplicationController
           else
             message = _("Enabled %s for rebuild on next boot, but failed to power cycle the host")
           end
-          process_success :success_msg => message % (@host), :success_redirect => :back
+          process_success :success_msg => message % @host, :success_redirect => :back
         rescue => error
           message = _('Failed to reboot %s.') % @host
           warning(message)
           Foreman::Logging.exception(message, error)
-          process_success :success_msg => _("Enabled %s for rebuild on next boot") % (@host), :success_redirect => :back
+          process_success :success_msg => _("Enabled %s for rebuild on next boot") % @host, :success_redirect => :back
         end
       else
-        process_success :success_msg => _("Enabled %s for rebuild on next boot") % (@host), :success_redirect => :back
+        process_success :success_msg => _("Enabled %s for rebuild on next boot") % @host, :success_redirect => :back
       end
     else
       process_error :redirect => :back, :error_msg => _("Failed to enable %{host} for installation: %{errors}") % { :host => @host, :errors => @host.errors.full_messages }
@@ -255,10 +249,14 @@ class HostsController < ApplicationController
 
   def cancelBuild
     if @host.built(false)
-      process_success :success_msg =>  _("Canceled pending build for %s") % (@host.name), :success_redirect => :back
+      process_success :success_msg => _("Canceled pending build for %s") % @host.name, :success_redirect => :back
     else
       process_error :redirect => :back, :error_msg => _("Failed to cancel pending build for %{hostname} with the following errors: %{errors}") % {:hostname => @host.name, :errors => @host.errors.full_messages.join(', ')}
     end
+  end
+
+  def build_errors
+    render :plain => @host.build_errors
   end
 
   def power
@@ -267,22 +265,6 @@ class HostsController < ApplicationController
     process_success :success_redirect => :back, :success_msg => _("%{host} is about to %{action}") % { :host => @host, :action => _(params[:power_action].downcase) }
   rescue => e
     process_error :redirect => :back, :error_msg => _("Failed to %{action} %{host}: %{e}") % { :action => _(params[:power_action]), :host => @host, :e => e }
-  end
-
-  def get_power_state
-    result = {:id => @host.id}.merge(host_power_state(:na))
-    if @host.supports_power?
-      result = host_power_ping result
-    else
-      result[:statusText] = _('Power operations are not enabled on this host.')
-    end
-
-    render :json => result
-  rescue => e
-    Foreman::Logging.exception("Failed to fetch power status", e)
-    result.merge!(host_power_state(:na))
-    result[:statusText] = _("Failed to fetch power status: %s") % e
-    render :json => result
   end
 
   def overview
@@ -301,7 +283,7 @@ class HostsController < ApplicationController
     @vm = @host.compute_resource.find_vm_by_uuid(@host.uuid)
     @compute_resource = @host.compute_resource
     render :partial => "compute_resources_vms/details"
-  rescue ActionView::Template::Error => exception
+  rescue ActiveRecord::RecordNotFound, ActionView::Template::Error => exception
     process_ajax_error exception, 'fetch vm information'
   end
 
@@ -342,27 +324,19 @@ class HostsController < ApplicationController
   def console
     return unless @host.compute_resource
     @console = @host.compute_resource.console @host.uuid
-    @encrypt = Setting[:websockets_encrypt]
-    render case @console[:type]
-             when 'spice'
-               "hosts/console/spice"
-             when 'vnc'
-               "hosts/console/vnc"
-             else
-               "hosts/console/log"
-           end
+    super
   rescue => e
     Foreman::Logging.exception("Failed to set console", e)
-    process_error :redirect => :back, :error_msg => _("Failed to set console: %s") % (e)
+    process_error :redirect => :back, :error_msg => _("Failed to set console: %s") % e
   end
 
   def toggle_manage
     if @host.toggle! :managed
       if @host.managed
         @host.suggest_default_pxe_loader
-        msg = _("Foreman now manages the build cycle for %s") % (@host.name)
+        msg = _("Foreman now manages the build cycle for %s") % @host.name
       else
-        msg = _("Foreman now no longer manages the build cycle for %s") % (@host.name)
+        msg = _("Foreman now no longer manages the build cycle for %s") % @host.name
       end
       process_success :success_msg => msg, :success_redirect => :back
     else
@@ -373,7 +347,7 @@ class HostsController < ApplicationController
   def disassociate
     if @host.compute?
       @host.disassociate!
-      process_success :success_msg => _("%s has been disassociated from VM") % (@host.name), :success_redirect => :back
+      process_success :success_msg => _("%s has been disassociated from VM") % @host.name, :success_redirect => :back
     else
       process_error :error_msg => _("Host %s is not associated with a VM") % @host.name, :redirect => :back
     end
@@ -381,9 +355,6 @@ class HostsController < ApplicationController
 
   def pxe_config
     redirect_to(:controller => "unattended", :action => 'host_template', :kind => "pxe_#{@host.operatingsystem.pxe_type}_config", :host_id => @host) if @host
-  end
-
-  def storeconfig_klasses
   end
 
   # multiple host selection methods
@@ -394,7 +365,7 @@ class HostsController < ApplicationController
 
   def update_multiple_parameters
     if params[:name].empty?
-      notice _("No parameters were allocated to the selected hosts, can't mass assign")
+      warning _("No parameters were allocated to the selected hosts, can't mass assign")
       redirect_to hosts_path
       return
     end
@@ -414,11 +385,11 @@ class HostsController < ApplicationController
       end
     end
     if @skipped_parameters.empty?
-      notice _('Updated all hosts!')
+      success _('Updated all hosts!')
       redirect_to(hosts_path)
       return
     else
-      notice _("%s Parameters updated, see below for more information") % (counter)
+      success _("%s Parameters updated, see below for more information") % counter
     end
   end
 
@@ -427,19 +398,19 @@ class HostsController < ApplicationController
 
   def update_multiple_hostgroup
     # simple validations
-    unless (id=params["hostgroup"]["id"])
+    unless (id = params["hostgroup"]["id"])
       error _('No host group selected!')
       redirect_to(select_multiple_hostgroup_hosts_path)
       return
     end
     hg = Hostgroup.find_by_id(id)
-    #update the hosts
+    # update the hosts
     @hosts.each do |host|
-      host.hostgroup=hg
+      host.hostgroup = hg
       host.save(:validate => false)
     end
 
-    notice _('Updated hosts: changed host group')
+    success _('Updated hosts: changed host group')
     # We prefer to go back as this does not lose the current search
     redirect_back_or_to hosts_path
   end
@@ -449,19 +420,19 @@ class HostsController < ApplicationController
 
   def update_multiple_owner
     # simple validations
-    if (params[:owner].nil?) || (id=params["owner"]["id"]).nil?
+    if params[:owner].nil? || (id = params["owner"]["id"]).nil?
       error _('No owner selected!')
       redirect_to(select_multiple_owner_hosts_path)
       return
     end
 
-    #update the hosts
+    # update the hosts
     @hosts.each do |host|
       host.is_owned_by = id
       host.save(:validate => false)
     end
 
-    notice _('Updated hosts: changed owner')
+    success _('Updated hosts: changed owner')
     redirect_back_or_to hosts_path
   end
 
@@ -479,7 +450,7 @@ class HostsController < ApplicationController
       end
     end
 
-    notice _('The power state of the selected hosts will be set to %s') % _(action)
+    success _('The power state of the selected hosts will be set to %s') % _(action)
     redirect_back_or_to hosts_path
   end
 
@@ -512,7 +483,7 @@ class HostsController < ApplicationController
     end
 
     if message.blank?
-      notice _('Configuration successfully rebuilt')
+      success _('Configuration successfully rebuilt')
     else
       error message
     end
@@ -538,9 +509,9 @@ class HostsController < ApplicationController
 
     if missed_hosts.empty?
       if reboot
-        notice _("The selected hosts were enabled for reboot and rebuild")
+        success _("The selected hosts were enabled for reboot and rebuild")
       else
-        notice _("The selected hosts will execute a build operation on next reboot")
+        success _("The selected hosts will execute a build operation on next reboot")
       end
     else
       error _("The following hosts failed the build operation: %s") % missed_hosts.map(&:name).to_sentence
@@ -552,7 +523,7 @@ class HostsController < ApplicationController
     # keep all the ones that were not deleted for notification.
     missed_hosts = @hosts.select {|host| !host.destroy}
     if missed_hosts.empty?
-      notice _("Destroyed selected hosts")
+      success _("Destroyed selected hosts")
     else
       error _("The following hosts were not deleted: %s") % missed_hosts.map(&:name).to_sentence
     end
@@ -582,28 +553,28 @@ class HostsController < ApplicationController
     @hosts.each do |host|
       host.disassociate!
     end
-    notice _('Updated hosts: Disassociated from VM')
+    success _('Updated hosts: Disassociated from VM')
     redirect_back_or_to hosts_path
   end
 
   def errors
-    merge_search_filter("last_report > \"#{Setting[:puppet_interval] + Setting[:outofsync_interval]} minutes ago\" and (status.failed > 0 or status.failed_restarts > 0)")
+    merge_search_filter("#{origin_intervals_query('>').join(' or ')} and (status.failed > 0 or status.failed_restarts > 0)")
     index _("Hosts with errors")
   end
 
   def active
-    merge_search_filter("last_report > \"#{Setting[:puppet_interval] + Setting[:outofsync_interval]} minutes ago\" and (status.applied > 0 or status.restarted > 0)")
+    merge_search_filter("#{origin_intervals_query('>').join(' or ')} and (status.applied > 0 or status.restarted > 0)")
     index _("Active Hosts")
   end
 
   def pending
-    merge_search_filter("last_report > \"#{Setting[:puppet_interval] + Setting[:outofsync_interval]} minutes ago\" and (status.pending > 0)")
+    merge_search_filter("#{origin_intervals_query('>').join(' or ')} and (status.pending > 0)")
     index _("Pending Hosts")
   end
 
   def out_of_sync
-    merge_search_filter("last_report < \"#{Setting[:puppet_interval] + Setting[:outofsync_interval]} minutes ago\" and status.enabled = true")
-    index _("Hosts which didn't run puppet in the last %s") % (view_context.time_ago_in_words((Setting[:puppet_interval]+Setting[:outofsync_interval]).minutes.ago))
+    merge_search_filter("#{origin_intervals_query('<').join(' or ')} and status.enabled = true")
+    index _("Hosts which didn't report in the last %s") % reported_origin_interval_settings.map { |origin, interval| "#{interval} minutes for #{origin}" }.join(' or ')
   end
 
   def disabled
@@ -614,24 +585,19 @@ class HostsController < ApplicationController
   def process_hostgroup
     @hostgroup = Hostgroup.find(params[:host][:hostgroup_id]) if params[:host][:hostgroup_id].to_i > 0
     return head(:not_found) unless @hostgroup
+    refresh_host
+    @host.attributes = @host.apply_inherited_attributes(host_params) unless @host.new_record?
 
-    @host = if params[:host][:id]
-              host = Host::Base.authorized(:view_hosts).find(params[:host][:id])
-              host = host.becomes Host::Managed
-              host.attributes = host.apply_inherited_attributes(host_params)
-              host
-            else
-              Host.new(host_params)
-            end
     @host.set_hostgroup_defaults true
     @host.set_compute_attributes unless params[:host][:compute_profile_id]
+    @host.apply_compute_profile(InterfaceMerge.new) if @host.compute_profile_id
     set_class_variables(@host)
     render :partial => "form"
   end
 
   def process_taxonomy
     return head(:not_found) unless @location || @organization
-    @host = Host.new(host_params)
+    refresh_host
     # revert compute resource to "Bare Metal" (nil) if selected
     # compute resource is not included taxonomy
     Taxonomy.as_taxonomy @organization, @location do
@@ -647,8 +613,9 @@ class HostsController < ApplicationController
   # renders only resulting templates set so the rest of form is unaffected
   def template_used
     host = params[:id] ? Host::Base.readonly.find(params[:id]) : Host.new
+    kind = params.delete(:provisioning)
     host.attributes = host_attributes_for_templates(host)
-    templates = host.available_template_kinds(params[:provisioning])
+    templates = host.available_template_kinds(kind)
     return not_found if templates.empty?
     render :partial => 'provisioning', :locals => { :templates => templates }
   end
@@ -657,7 +624,7 @@ class HostsController < ApplicationController
     scope = Template.descendants.detect { |klass| klass.name == params[:scope] } || Template
     @hosts = scope.preview_host_collection.where("name LIKE :name", :name => "%#{params['q']}%").limit(10).pluck(:id, :name).map {|id, name| {:id => id, :name => name}}
     respond_to do |format|
-     format.json { render :json => @hosts }
+      format.json { render :json => @hosts }
     end
   end
 
@@ -669,10 +636,12 @@ class HostsController < ApplicationController
 
   define_action_permission [
     'clone', 'externalNodes', 'overview', 'bmc', 'vm', 'runtime', 'resources', 'templates', 'nics',
-    'pxe_config', 'storeconfig_klasses', 'active', 'errors', 'out_of_sync', 'pending', 'disabled', 'get_power_state', 'preview_host_collection'], :view
+    'pxe_config', 'active', 'errors', 'out_of_sync', 'pending', 'disabled', 'get_power_state', 'preview_host_collection', 'build_errors'
+  ], :view
   define_action_permission [
     'setBuild', 'cancelBuild', 'multiple_build', 'submit_multiple_build', 'review_before_build',
-    'rebuild_config', 'submit_rebuild_config'], :build
+    'rebuild_config', 'submit_rebuild_config'
+  ], :build
   define_action_permission 'power', :power
   define_action_permission 'ipmi_boot', :ipmi_boot
   define_action_permission 'console', :console
@@ -685,37 +654,37 @@ class HostsController < ApplicationController
     'update_multiple_location', 'select_multiple_location',
     'disassociate', 'update_multiple_disassociate', 'multiple_disassociate',
     'select_multiple_owner', 'update_multiple_owner',
-    'select_multiple_power_state', 'update_multiple_power_state', 'random_name'], :edit
+    'select_multiple_power_state', 'update_multiple_power_state', 'random_name'
+  ], :edit
   define_action_permission ['multiple_destroy', 'submit_multiple_destroy'], :destroy
 
   def refresh_host
-    @host = Host::Base.authorized(:view_hosts, Host).find_by_id(params['host_id'])
-    if @host
-      unless @host.is_a?(Host::Managed)
-        @host      = @host.becomes(Host::Managed)
-        @host.type = "Host::Managed"
-      end
-      @host.attributes = host_params
-    else
-      @host ||= Host::Managed.new(host_params)
-    end
+    @host = Host::Base.authorized(:view_hosts, Host).find_by_id(params[:host_id] || params.dig(:host, :id))
+    @host ||= Host.new(host_params)
 
+    unless @host.is_a?(Host::Managed)
+      @host      = @host.becomes(Host::Managed)
+      @host.type = "Host::Managed"
+    end
+    @host.attributes = host_params unless @host.new_record?
+
+    @host.lookup_values.each(&:validate_value)
     @host
   end
 
   def set_host_type
     return unless params[:host] && params[:host][:type]
-    type = params[:host].delete(:type) #important, otherwise mass assignment will save the type.
+    type = params[:host].delete(:type) # important, otherwise mass assignment will save the type.
     if type.constantize.new.is_a?(Host::Base)
       @host      = @host.becomes(type.constantize)
       @host.type = type
     else
-      error _("invalid type: %s requested") % (type)
+      error _("invalid type: %s requested") % type
       render :unprocessable_entity
     end
   rescue => e
     Foreman::Logging.exception("Something went wrong while changing host type", e)
-    error _("Something went wrong while changing host type - %s") % (e)
+    error _("Something went wrong while changing host type - %s") % e
   end
 
   # overwrite application_controller
@@ -740,7 +709,7 @@ class HostsController < ApplicationController
   end
 
   def find_multiple
-  # Lets search by name or id and make sure one of them exists first
+    # Lets search by name or id and make sure one of them exists first
     if params.key?(:host_names) || params.key?(:host_ids) || multiple_with_filter?
       @hosts = resource_base.search_for(params[:search]) if multiple_with_filter?
       @hosts ||= resource_base.where("hosts.id IN (?) or hosts.name IN (?)", params[:host_ids], params[:host_names])
@@ -755,13 +724,13 @@ class HostsController < ApplicationController
       return false
     end
 
-    return @hosts
+    @hosts
   rescue => error
     message = _("Something went wrong while selecting hosts - %s") % error
     error(message)
     Foreman::Logging.exception(message, error)
     redirect_to hosts_path
-    return false
+    false
   end
 
   def toggle_hostmode(mode = true)
@@ -770,7 +739,7 @@ class HostsController < ApplicationController
     action = mode ? "enabled" : "disabled"
 
     if missed_hosts.empty?
-      notice _("%s selected hosts") % (action.capitalize)
+      success _("%s selected hosts") % action.capitalize
     else
       error _("The following hosts were not %{action}: %{missed_hosts}") % { :action => action, :missed_hosts => missed_hosts.map(&:name).to_sentence }
     end
@@ -797,11 +766,11 @@ class HostsController < ApplicationController
   end
 
   def validate_power_action
-    if params[:power].blank? || (action=params[:power][:action]).blank? ||
+    if params[:power].blank? || (action = params[:power][:action]).blank? ||
         !PowerManager::REAL_ACTIONS.include?(action)
       error _('No or invalid power state selected!')
       redirect_to(select_multiple_power_state_hosts_path)
-      return false
+      false
     end
   end
 
@@ -820,7 +789,7 @@ class HostsController < ApplicationController
       return false
     end
 
-    if !proxy_id.blank? && !SmartProxy.find_by_id(proxy_id)
+    if proxy_id.present? && !SmartProxy.find_by_id(proxy_id)
       error _('Invalid proxy selected!')
       redirect_to(redirect_path)
       return false
@@ -850,9 +819,9 @@ class HostsController < ApplicationController
 
     if failed_hosts.empty?
       if proxy
-        notice _('The %{proxy_type} proxy of the selected hosts was set to %{proxy_name}') % {:proxy_name => proxy.name, :proxy_type => proxy_type}
+        success _('The %{proxy_type} proxy of the selected hosts was set to %{proxy_name}') % {:proxy_name => proxy.name, :proxy_type => proxy_type}
       else
-        notice _('The %{proxy_type} proxy of the selected hosts was cleared') % {:proxy_type => proxy_type}
+        success _('The %{proxy_type} proxy of the selected hosts was cleared') % {:proxy_type => proxy_type}
       end
     else
       error n_("The %{proxy_type} proxy could not be set for host: %{host_names}.",
@@ -870,24 +839,6 @@ class HostsController < ApplicationController
     raise Foreman::Exception.new(N_("No templates found")) if @templates.empty?
   end
 
-  def host_power_ping(result)
-    timeout = 3
-    Timeout.timeout(timeout) do
-      result.merge!(host_power_state(@host.supports_power_and_running? ? :on : :off))
-    end
-    result
-  rescue Timeout::Error
-    logger.debug("Failed to retrieve power status for #{@host} within #{timeout} seconds.")
-    result[:statusText] = n_("Failed to retrieve power status for %{host} within %{timeout} second.",
-                             "Failed to retrieve power status for %{host} within %{timeout} seconds.", timeout) %
-                            {:host => @host, :timeout => timeout}
-    result
-  end
-
-  def host_power_state(key)
-    HOST_POWER[key].merge(:title => _(HOST_POWER[key][:title]))
-  end
-
   def host_attributes_for_templates(host)
     # This method wants to only get the attributes applicable to the current
     # kind of host. For example 'is_owned_by', even if it's in host_params,
@@ -897,8 +848,8 @@ class HostsController < ApplicationController
     if host_params["compute_attributes"].present?
       host_attributes << 'compute_attributes'
     end
-    host_params.select do |k,v|
-       host_attributes.include?(k) && !k.end_with?('_ids')
+    host_params.select do |k, v|
+      host_attributes.include?(k) && !k.end_with?('_ids')
     end.except(:host_parameters_attributes)
   end
 
@@ -906,9 +857,15 @@ class HostsController < ApplicationController
     [:name, :operatingsystem, :environment, :compute_resource_or_model, :hostgroup, :last_report]
   end
 
-  def normalize_vm_attributes
-    if host_params["compute_attributes"] && host_params["compute_attributes"]["scsi_controllers"]
-      normalize_scsi_attributes(host_params["compute_attributes"])
+  def origin_intervals_query(compare_with)
+    reported_origin_interval_settings.map do |origin, interval|
+      "(origin = #{origin} and last_report #{compare_with}  \"#{interval + Setting[:outofsync_interval]} minutes ago\")"
     end
+  end
+
+  def reported_origin_interval_settings
+    Hash[Report.origins.map do |origin|
+      [origin, Setting[:"#{origin.downcase}_interval"].to_i]
+    end]
   end
 end

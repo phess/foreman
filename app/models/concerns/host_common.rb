@@ -1,6 +1,6 @@
 require 'securerandom'
 
-#Common methods between host and hostgroup
+# Common methods between host and hostgroup
 # mostly for template rendering consistency
 module HostCommon
   extend ActiveSupport::Concern
@@ -22,10 +22,14 @@ module HostCommon
     belongs_to :architecture
     belongs_to :environment
     belongs_to :operatingsystem
+
+    include SmartProxyHostExtensions
+
     belongs_to :medium
     belongs_to :ptable
     belongs_to :realm
     belongs_to :compute_profile
+    belongs_to :compute_resource
 
     before_save :check_puppet_ca_proxy_is_required?, :crypt_root_pass
     has_many :host_config_groups, :as => :host
@@ -44,7 +48,7 @@ module HostCommon
     # Replacement of accepts_nested_attributes_for :lookup_values,
     # to work around the lack of `host_id` column in lookup_values.
     def lookup_values_attributes=(lookup_values_attributes)
-      lookup_values_attributes.each_value do |attribute|
+      lookup_values_attributes.each do |_, attribute|
         attr = attribute.dup
 
         id = attr.delete(:id)
@@ -70,9 +74,13 @@ module HostCommon
     end
   end
 
+  def medium_provider
+    @medium_provider ||= Foreman::Plugin.medium_providers.find_provider(self)
+  end
+
   # Returns a url pointing to boot file
   def url_for_boot(file)
-    "#{os.medium_uri(self)}/#{os.url_for_boot(file)}"
+    os.url_for_boot(medium_provider, file)
   end
 
   def puppetca?
@@ -99,7 +107,7 @@ module HostCommon
   # Else if the host/hostgroup's operatingsystem has only one media then use the image_path from that as this is automatically displayed when there is only one item
   # Else we cannot provide a default and it is cut and paste time
   def default_image_file
-    return "" unless operatingsystem && operatingsystem.supports_image
+    return "" unless operatingsystem&.supports_image
     if medium
       nfs_path = medium.try :image_path
       if operatingsystem.try(:media) && operatingsystem.media.size == 1
@@ -108,7 +116,7 @@ module HostCommon
       # We encode the hw_model into the image file name as not all Sparc flashes can contain all possible hw_models. The user can always
       # edit it if required or use symlinks if they prefer.
       hw_model = model.try :hardware_model if defined?(model_id)
-      operatingsystem.interpolate_medium_vars(nfs_path, architecture.name, operatingsystem) +\
+      medium_provider.interpolate_vars(nfs_path) + \
         "#{operatingsystem.file_prefix}.#{architecture}#{hw_model.empty? ? '' : '.' + hw_model.downcase}.#{operatingsystem.image_extension}"
     else
       ""
@@ -119,7 +127,7 @@ module HostCommon
     # We only save a value into the image_file field if the value is not the default path, (which was placed in the entry when it was displayed,)
     # and it is not a directory, (ends in /)
     value = ((default_image_file == file) || (file =~ /\/\Z/) || file == "") ? nil : file
-    write_attribute :image_file, value
+    self[:image_file] = value
   end
 
   def image_file
@@ -130,7 +138,7 @@ module HostCommon
     # hosts will always copy and crypt the password from parents when saved, but hostgroups should
     # only crypt if the attribute is stored, else will stay blank and inherit
     unencrypted_pass = if is_a?(Hostgroup)
-                         read_attribute(:root_pass)
+                         self[:root_pass]
                        else
                          root_pass
                        end
@@ -151,16 +159,6 @@ module HostCommon
         self.grub_pass = PasswordCrypt.grub2_passw_crypt(unencrypted_pass)
       end
     end
-  end
-
-  def param_true?(name)
-    Foreman::Deprecation.renderer_deprecation('1.17', __method__, 'host_param_true?')
-    params.has_key?(name) && Foreman::Cast.to_bool(params[name])
-  end
-
-  def param_false?(name)
-    Foreman::Deprecation.renderer_deprecation('1.17', __method__, 'host_param_false?')
-    params.has_key?(name) && Foreman::Cast.to_bool(params[name]) == false
   end
 
   def cg_class_ids
@@ -229,8 +227,8 @@ module HostCommon
   protected
 
   def set_lookup_value_matcher
-    #in migrations, this method can get called before the attribute exists
-    #the #attribute_names method is cached, so it's not going to be a performance issue
+    # in migrations, this method can get called before the attribute exists
+    # the #attribute_names method is cached, so it's not going to be a performance issue
     return true unless self.class.attribute_names.include?("lookup_value_matcher")
     self.lookup_value_matcher = lookup_value_match
   end

@@ -11,8 +11,6 @@ module Foreman
 
       def after_initialize
         super
-        precompile_assets(*assets_from_settings(id))
-        precompile_assets(*assets_from_settings(id.to_s.gsub('-', '_').to_sym))
         precompile_assets(*find_assets(path)) if @automatic_assets
         register_assets
       end
@@ -25,6 +23,15 @@ module Foreman
       # Disable when assets are combined and only some need to be precompiled
       def automatic_assets(enabled)
         @automatic_assets = !!enabled
+      end
+
+      def webpack_manifest_path
+        manifest_path = File.join(path, 'public', 'webpack', id.to_s, 'manifest.json')
+        File.file?(manifest_path) ? manifest_path : nil
+      end
+
+      def uses_webpack?
+        path && (File.file?(File.join(path, 'webpack', 'index.js')) || webpack_manifest_path.present?)
       end
 
       private
@@ -41,26 +48,14 @@ module Foreman
         # automatically detect and include them. Requires manual configuration
         # to use this unsupported layout.
         new_assets, outside_prefix = new_assets.partition do |p|
-          p.start_with?("#{id}/") || p.start_with?("#{id.to_s.gsub('-', '_')}/")
+          p.start_with?("#{id}/") || p.start_with?("#{id.to_s.tr('-', '_')}/")
         end
 
         if outside_prefix.present?
-          Rails.logger.warn "Plugin #{id} has assets outside of its namespace, these will be ignored: #{outside_prefix.join(', ')}"
+          Rails.logger.debug "Plugin #{id} has assets outside of its namespace, these will be ignored: #{outside_prefix.join(', ')}"
         end
 
         new_assets
-      end
-
-      # Call any initializers that configure SETTINGS for the plugin:assets:precompile
-      # rake task and migrate the data.
-      def assets_from_settings(id)
-        Rails.application.initializers.detect { |i| i.name.to_s == "#{id}.configure_assets" }.try!(:run)
-        assets = SETTINGS[id].try!(:[], :assets).try!(:[], :precompile)
-        if assets
-          Foreman::Deprecation.deprecation_warning('1.18', "Plugin #{id} must register assets via precompile_assets, not SETTINGS[:#{id}]")
-          SETTINGS[id].delete(:assets)
-        end
-        assets
       end
 
       def register_assets

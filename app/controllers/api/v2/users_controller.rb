@@ -6,7 +6,6 @@ module Api
       include Foreman::Controller::UsersMixin
       include Foreman::Controller::Parameters::User
       include Api::Version2
-      include Api::TaxonomyScope
 
       wrap_parameters User, :include => user_params_filter.accessible_attributes(
         Foreman::Controller::Parameters::User::Context.new(:api, controller_name, nil, false)) +
@@ -16,6 +15,7 @@ module Api
 
       api :GET, "/users/", N_("List all users")
       api :GET, "/auth_source_ldaps/:auth_source_ldap_id/users", N_("List all users for LDAP authentication source")
+      api :GET, "/auth_source_externals/:auth_source_external_id/users", N_("List all users for external authentication source")
       api :GET, "/usergroups/:usergroup_id/users", N_("List all users for user group")
       api :GET, "/roles/:role_id/users", N_("List all users for role")
       api :GET, "/locations/:location_id/users", N_("List all users for location")
@@ -25,6 +25,7 @@ module Api
       param :role_id, String, :desc => N_("ID of role")
       param_group :taxonomy_scope, ::Api::V2::BaseController
       param_group :search_and_pagination, ::Api::V2::BaseController
+      add_scoped_search_description_for(User)
 
       def index
         @users = resource_scope_for_index
@@ -43,7 +44,7 @@ module Api
         param :mail, String, :required => true
         param :description, String, :required => false
         param :admin, :bool, :required => false, :desc => N_("is an admin account")
-        param :password, String, :required => true
+        param :password, String, :desc => N_("Required unless user is in an external authentication source")
         param :default_location_id, Integer if SETTINGS[:locations_enabled]
         param :default_organization_id, Integer if SETTINGS[:organizations_enabled]
         param :auth_source_id, Integer, :required => true
@@ -90,7 +91,7 @@ module Api
       param_group :user_update
 
       def update
-        if @user.update_attributes(user_params)
+        if @user.update(user_params)
           update_sub_hostgroups_owners
 
           process_success

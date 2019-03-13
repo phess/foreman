@@ -25,7 +25,7 @@ module Orchestration
 
     def rebuild_methods_for(only = nil)
       if only.present?
-        (@rebuild_methods || {}).select { |k,v| only.include?(v) }
+        (@rebuild_methods || {}).select { |k, v| only.include?(v) }
       else
         @rebuild_methods || {}
       end
@@ -166,6 +166,7 @@ module Orchestration
     unless q.nil?
       if processed > 0
         logger.info("Processed #{processed} tasks from queue '#{q.name}', completed #{q.completed.count}/#{q.all.count}") unless q.empty?
+        # rubocop:disable Rails/FindEach
         q.all.each do |task|
           msg = "Task '#{task.name}' *#{task.status}*"
           if task.status?(:completed) || task.status?(:pending)
@@ -174,12 +175,13 @@ module Orchestration
             logger.error msg
           end
         end
+        # rubocop:enable Rails/FindEach
       end
     end
   end
 
   def fail_queue(q)
-    q.pending.each{ |task| task.status = "canceled" }
+    q.pending.each { |task| task.status = "canceled" }
 
     # handle errors
     # we try to undo all completed operations and trigger a DB rollback
@@ -207,15 +209,15 @@ module Orchestration
       met = met.to_s
       case met
       when /set/
-        met.gsub!("set","del")
+        met.gsub!("set", "del")
       when /del/
-        met.gsub!("del","set")
+        met.gsub!("del", "set")
       else
         raise "Dont know how to rollback #{met}"
       end
       met = met.to_sym
     end
-    if obj.respond_to?(met,true)
+    if obj.respond_to?(met, true)
       param.nil? || (return obj.send(met, param))
       return obj.send(met)
     else

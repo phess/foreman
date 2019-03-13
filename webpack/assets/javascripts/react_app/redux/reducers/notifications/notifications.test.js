@@ -1,11 +1,13 @@
-import reducer from './index';
 import * as types from '../../consts';
+
 import {
   initialState,
   stateWithNotifications,
-  request,
-  response
+  panelRequest,
+  NotificationRequest,
 } from './notifications.fixtures';
+
+import reducer from './index';
 
 describe('notification reducer', () => {
   it('should return the initial state', () => {
@@ -16,8 +18,35 @@ describe('notification reducer', () => {
     expect(
       reducer(stateWithNotifications, {
         type: types.NOTIFICATIONS_MARK_GROUP_AS_READ,
-        payload: request
+        payload: panelRequest,
       })
-    ).toEqual(response);
+    ).toMatchSnapshot();
+  });
+
+  it('should handle NOTIFICATIONS_MARK_GROUP_AS_CLEARED', () => {
+    expect(
+      reducer(stateWithNotifications, {
+        type: types.NOTIFICATIONS_MARK_GROUP_AS_CLEARED,
+        payload: panelRequest,
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('should handle NOTIFICATIONS_MARK_AS_CLEAR', () => {
+    expect(
+      reducer(stateWithNotifications, {
+        type: types.NOTIFICATIONS_MARK_AS_CLEAR,
+        payload: NotificationRequest,
+      })
+    ).toMatchSnapshot();
+  });
+
+  it('should handle NOTIFICATIONS_MARK_AS_READ', () => {
+    expect(
+      reducer(stateWithNotifications, {
+        type: types.NOTIFICATIONS_MARK_AS_READ,
+        payload: NotificationRequest,
+      })
+    ).toMatchSnapshot();
   });
 });

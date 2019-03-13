@@ -1,5 +1,5 @@
 # we need permissions to be seeded already
-require Rails.root + 'db/seeds.d/03-permissions'
+require Rails.root + 'db/seeds.d/030-permissions'
 
 # Fake models to make sure that this migration can be executed even when
 # original models changes later (e.g. add validation on columns that are not
@@ -74,7 +74,7 @@ class FakeUser < ApplicationRecord
   has_many :cached_usergroups, :through => :cached_usergroup_members, :source => :usergroup
 end
 
-class MigratePermissions < ActiveRecord::Migration
+class MigratePermissions < ActiveRecord::Migration[4.2]
   # STEP 0 - add missing permissions to DB
   # some engines could have defined new permissions during their initialization
   # but permissions table hadn't existed yet so we check all registered
@@ -164,7 +164,7 @@ class MigratePermissions < ActiveRecord::Migration
       filters[:compute_resources] = search = user.compute_resources.distinct.map { |cr| "id = #{cr.id}" }.join(' or ')
       affected                    = clones.map(&:filters).flatten.select { |f| f.resource_type == 'ComputeResource' }
       affected.each do |filter|
-        filter.update_attributes :search => search unless search.blank?
+        filter.update :search => search if search.present?
       end
       say "... compute resource filters applied"
 
@@ -176,7 +176,7 @@ class MigratePermissions < ActiveRecord::Migration
       filters[:hostgroups] = search = user.hostgroups.distinct.map { |cr| "id = #{cr.id}" }.join(' or ')
       affected             = clones.map(&:filters).flatten.select { |f| f.resource_type == 'Hostgroup' }
       affected.each do |filter|
-        filter.update_attributes :search => search unless search.blank?
+        filter.update :search => search if search.present?
       end
       say "... hostgroups filters applied"
 
@@ -189,7 +189,7 @@ class MigratePermissions < ActiveRecord::Migration
       affected.each do |filter|
         filter.organizations = orgs
         filter.locations = locs
-        filter.update_attributes :search => search unless search.blank?
+        filter.update :search => search if search.present?
       end
       say "... all other filters applied"
 
@@ -214,7 +214,7 @@ class MigratePermissions < ActiveRecord::Migration
       user_cond = "owner_id = #{user.id} and owner_type = User"
       group_cond = user.cached_usergroups.distinct.map { |g| "owner_id = #{g.id}" }.join(' or ')
       search = "(#{user_cond})"
-      search += " or ((#{group_cond}) and owner_type = Usergroup)" unless group_cond.blank?
+      search += " or ((#{group_cond}) and owner_type = Usergroup)" if group_cond.present?
     end
 
     # normal filters - domains, compute resource, hostgroup, facts

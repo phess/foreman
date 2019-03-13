@@ -63,7 +63,7 @@
 .statistics-bar {
   width: 260px;
   height: 305px;
-  margin: 0 auto 27;
+  margin: 0 auto 27px;
 }
 
 .statistics-pie,
@@ -143,6 +143,22 @@
   font-size: 14px;
 }
 
+.metrics-chart {
+  width: 240px;
+  margin: 50px auto 12px;
+  padding-bottom: 40px;
+}
+
+.report-chart {
+  height: 405px;
+}
+
+.host-configuration-chart {
+  width: 240px;
+  margin: 25px auto 12px;
+  padding-bottom: 40px;
+}
+
 #host-show {
   .statistics-chart {
     height: 230px;
@@ -173,4 +189,11 @@
   &.disabled {
     opacity: (0.3);
   }
+}
+
+#factChartModalBody {
+  min-height: 500px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }

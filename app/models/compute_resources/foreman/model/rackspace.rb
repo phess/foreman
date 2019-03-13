@@ -1,6 +1,6 @@
 module Foreman::Model
   class Rackspace < ComputeResource
-    validates :url, :format => { :with => URI.regexp }, :presence => true
+    validates :url, :format => { :with => URI::DEFAULT_PARSER.make_regexp }, :presence => true
     validates :user, :password, :region, :presence => true
     validate :ensure_valid_region
 
@@ -55,7 +55,7 @@ module Foreman::Model
       super && flavors
     rescue Excon::Errors::Unauthorized => e
       errors[:base] << e.response.body
-    rescue Fog::Compute::Rackspace::Error, Excon::Errors::SocketError=> e
+    rescue Fog::Compute::Rackspace::Error, Excon::Errors::SocketError => e
       errors[:base] << e.message
     end
 
@@ -69,7 +69,7 @@ module Foreman::Model
 
     def destroy_vm(uuid)
       vm = find_vm_by_uuid(uuid)
-      vm.destroy if vm
+      vm&.destroy
       true
     end
 
@@ -94,6 +94,14 @@ module Foreman::Model
       true
     end
 
+    def normalize_vm_attrs(vm_attrs)
+      normalized = slice_vm_attributes(vm_attrs, ['flavor_id', 'image_id'])
+
+      normalized['flavor_name'] = self.flavors.detect { |f| f.id == normalized['flavor_id'] }.try(:name)
+      normalized['image_name'] = self.images.find_by(:uuid => normalized['image_id']).try(:name)
+      normalized
+    end
+
     private
 
     def client
@@ -108,7 +116,7 @@ module Foreman::Model
     end
 
     def vm_instance_defaults
-      #256 server
+      # 256 server
       super.merge(
         :flavor_id => 1,
         :config_drive => true

@@ -4,8 +4,9 @@ class ParameterTest < ActiveSupport::TestCase
   setup do
     User.current = users :admin
   end
+
   test "names may be reused in different parameter groups" do
-    host = FactoryGirl.create(:host)
+    host = FactoryBot.create(:host)
     p1 = HostParameter.new :name => "param", :value => "value1", :reference_id => host.id
     assert p1.save
     p2 = DomainParameter.new :name => "param", :value => "value2", :reference_id => Domain.first.id
@@ -27,7 +28,7 @@ class ParameterTest < ActiveSupport::TestCase
   test "parameters are hierarchically applied" do
     CommonParameter.create :name => "animal", :value => "cat"
 
-    host         = FactoryGirl.create(:host, :with_hostgroup, :with_subnet, :managed)
+    host         = FactoryBot.create(:host, :with_hostgroup, :with_subnet, :managed)
     organization = host.organization
     location     = host.location
     domain       = host.domain
@@ -58,7 +59,7 @@ class ParameterTest < ActiveSupport::TestCase
     host.clear_host_parameters_cache!
     assert_equal "tortoise", host.host_params["animal"]
 
-    hostgroup.group_parameters << GroupParameter.create(:name => "animal",:value => "cow")
+    hostgroup.group_parameters << GroupParameter.create(:name => "animal", :value => "cow")
     host.clear_host_parameters_cache!
     assert_equal "cow", host.host_params["animal"]
 
@@ -68,17 +69,17 @@ class ParameterTest < ActiveSupport::TestCase
   end
 
   test "parameters should display correct safe value for nested taxonomies" do
-    loc1 = FactoryGirl.create(:location)
-    loc2 = FactoryGirl.create(:location, :parent => loc1)
-    host = FactoryGirl.create(:host, :location => loc2)
+    loc1 = FactoryBot.create(:location)
+    loc2 = FactoryBot.create(:location, :parent => loc1)
+    host = FactoryBot.create(:host, :location => loc2)
 
     loc1.location_parameters << LocationParameter.create(:name => "animal", :value => "lion")
-    params = host.host_inherited_params(true)
+    params = host.inherited_params_hash
     assert_equal "lion", params["animal"][:safe_value]
     assert_equal loc1.title, params["animal"][:source_name]
 
     loc2.location_parameters << LocationParameter.create(:name => "animal", :value => "dog")
-    params = host.host_inherited_params(true)
+    params = host.inherited_params_hash
     assert_equal "dog", params["animal"][:safe_value]
     assert_equal loc2.title, params["animal"][:source_name]
   end
@@ -93,5 +94,45 @@ EOF
     param = CommonParameter.new(:name => 'multiline', :value => val)
     assert param.save!
     assert_equal param.value, val
+  end
+
+  test "should not create parameter with invalid separators in name" do
+    invalid_name_list.push('name with space').each do |name|
+      parameter = FactoryBot.build(:parameter, :name => name, :subnet => subnets(:five))
+      refute parameter.valid?, "Can create parameter with invalid name #{name}"
+      assert_includes parameter.errors.keys, :name
+    end
+  end
+
+  test "should not update parameter with invalid separators in name" do
+    parameter = parameters(:subnet)
+    invalid_name_list.push('name with space').each do |name|
+      parameter.name = name
+      refute parameter.valid?, "Can update parameter with invalid name #{name}"
+      assert_includes parameter.errors.keys, :name
+    end
+  end
+
+  test "should create subnet parameter with valid names" do
+    RFauxFactory.gen_strings().values.each do |name|
+      parameter = FactoryBot.build(:parameter, :name => name, :value => '123', :subnet => subnets(:five))
+      assert parameter.valid?, "Can't create parameter with valid name #{name}"
+    end
+  end
+
+  test "should create parameter with valid separators in value" do
+    %w(, / - |).each do |separator|
+      value = RFauxFactory.gen_strings().values.join("#{separator} ")
+      parameter = FactoryBot.build(:parameter, :name => "valid_key", :value => value, :subnet => subnets(:five))
+      assert parameter.valid?, "Can't create parameter with valid value #{value}"
+    end
+  end
+
+  test "should create parameter with valid separators in key" do
+    %w(, / - |).each do |separator|
+      name = RFauxFactory.gen_strings().values.join(separator.to_s)
+      parameter = FactoryBot.build(:parameter, :name => name, :value => '123', :subnet => subnets(:five))
+      assert parameter.valid?, "Can't create parameter with valid name #{name}"
+    end
   end
 end

@@ -14,14 +14,21 @@ module Foreman::Controller::SmartProxyAuth
       before_action(:only => actions) { require_smart_proxy_or_login(options[:features]) }
       attr_reader :detected_proxy
 
-      define_method(:require_ssl_with_smart_proxy_filters?) do
-        if [actions].flatten.map(&:to_s).include?(self.action_name)
-          false
-        else
-          require_ssl_without_smart_proxy_filters?
-        end
+      cattr_accessor :smart_proxy_filter_actions
+      self.smart_proxy_filter_actions ||= []
+      self.smart_proxy_filter_actions.push(*actions)
+
+      prepend SmartProxyRequireSsl
+    end
+  end
+
+  module SmartProxyRequireSsl
+    def require_ssl?
+      if [self.smart_proxy_filter_actions].flatten.map(&:to_s).include?(self.action_name)
+        false
+      else
+        super
       end
-      alias_method_chain :require_ssl?, :smart_proxy_filters
     end
   end
 
@@ -78,7 +85,7 @@ module Foreman::Controller::SmartProxyAuth
               request_hosts << certificate.subject
             end
           else
-            request_hosts << $1 if $1
+            request_hosts << Regexp.last_match(1) if Regexp.last_match(1)
           end
         else
           logger.warn "SSL cert has not been verified (#{verify}) - request from #{request.ip}, #{dn}"
@@ -97,14 +104,14 @@ module Foreman::Controller::SmartProxyAuth
     return false unless request_hosts
 
     hosts = Hash[proxies.map { |p| [URI.parse(p.url).host, p] }]
-    allowed_hosts = hosts.keys.push(*Setting[:trusted_puppetmaster_hosts])
-    logger.debug { ("Verifying request from #{request_hosts.inspect} against #{allowed_hosts.inspect}") }
+    allowed_hosts = hosts.keys.push(*Setting[:trusted_hosts])
+    logger.debug { "Verifying request from #{request_hosts.inspect} against #{allowed_hosts.inspect}" }
 
     if (host = detect_matching_host(allowed_hosts, request_hosts))
       @detected_proxy = hosts[host] if host
       true
     else
-      logger.warn "No smart proxy server found on #{request_hosts.inspect} and is not in trusted_puppetmaster_hosts"
+      logger.warn "No smart proxy server found on #{request_hosts.inspect} and is not in trusted_hosts"
       false
     end
   end

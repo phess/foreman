@@ -5,13 +5,12 @@ module Authorizable
     return true if Thread.current[:ignore_permission_check]
 
     authorizer = Authorizer.new(User.current)
-    creation = self.id_changed?
+    creation = self.saved_change_to_id?
     name = permission_name(creation ? :create : :edit)
 
     Foreman::Logging.logger('permissions').debug { "verifying the transaction by permission #{name} for class #{self.class}" }
-    unless authorizer.can?(name, self)
-      org_loc_string = Taxonomy.enabled_taxonomies.map { |tax| _(tax) }.join(' ' + _('or') + ' ')
-      errors.add :base, _("You don't have permission %{name} with attributes that you have specified or you don't have access to specified %{tax_string}") % { :name => name, :tax_string => org_loc_string }
+    unless authorizer.can?(name, self, false)
+      errors.add :base, _("You don't have permission %{name} with attributes that you have specified or you don't have access to specified organizations or locations") % { :name => name }
 
       # This is required in case the rollback happend, the instance must look like new record so that all url helpers work correctly. Rails don't rollback these attributes.
       if creation
@@ -34,15 +33,7 @@ module Authorizable
   end
 
   def permission_name(action)
-    type = Permission.resource_name(self.class)
-    permissions = Permission.where(:resource_type => type).where(["#{Permission.table_name}.name LIKE ?", "#{action}_%"])
-
-    # some permissions are grouped for same resource, e.g. edit_comupute_resources and edit_compute_resources_vms, in such case we need to detect the right permission
-    if permissions.size > 1
-      permissions.detect { |p| p.name.end_with?(type.underscore.pluralize) }.try(:name)
-    else
-      permissions.first.try(:name)
-    end
+    self.class.find_permission_name(action)
   end
 
   included do
@@ -91,7 +82,7 @@ module Authorizable
     end
 
     def allows_taxonomy_filtering?(taxonomy)
-      scoped_search_definition.fields.has_key?(taxonomy)
+      scoped_search_definition&.fields&.has_key?(taxonomy.to_sym)
     end
 
     def allows_organization_filtering?
@@ -115,6 +106,18 @@ module Authorizable
       yield
     ensure
       Thread.current[:ignore_permission_check] = original_value
+    end
+
+    def find_permission_name(action)
+      type = Permission.resource_name(self)
+      permissions = Permission.where(:resource_type => type).where(["#{Permission.table_name}.name LIKE ?", "#{action}_%"])
+
+      # some permissions are grouped for same resource, e.g. edit_comupute_resources and edit_compute_resources_vms, in such case we need to detect the right permission
+      if permissions.size > 1
+        permissions.detect { |p| p.name.end_with?(type.underscore.pluralize) }.try(:name)
+      else
+        permissions.first.try(:name)
+      end
     end
   end
 end

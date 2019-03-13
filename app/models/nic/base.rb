@@ -2,7 +2,8 @@
 # This class is the both parent
 module Nic
   class Base < ApplicationRecord
-    include Foreman::STI
+    audited associated_with: :host
+    prepend Foreman::STI
     include Encryptable
     encrypts :password
 
@@ -35,13 +36,14 @@ module Nic
     validates :ip6, :presence => true, :if => Proc.new { |nic| nic.host_managed? && nic.require_ip6_validation? }
 
     validate :validate_subnet_types
+    validates_with SubnetsConsistencyValidator
     validate :validate_updating_types
 
     # Validate that subnet's taxonomies are defined for nic's host
-    Taxonomy.enabled_taxonomies.map(&:singularize).map(&:to_sym).each do |taxonomy|
-      validates :subnet, :belongs_to_host_taxonomy => {:taxonomy => taxonomy }
-      validates :subnet6, :belongs_to_host_taxonomy => {:taxonomy => taxonomy }
-    end
+    validates :subnet, :belongs_to_host_taxonomy => {:taxonomy => :location }
+    validates :subnet6, :belongs_to_host_taxonomy => {:taxonomy => :location }
+    validates :subnet, :belongs_to_host_taxonomy => {:taxonomy => :organization }
+    validates :subnet6, :belongs_to_host_taxonomy => {:taxonomy => :organization }
 
     scope :bmc, -> { where(:type => "Nic::BMC") }
     scope :bonds, -> { where(:type => "Nic::Bond") }
@@ -70,9 +72,14 @@ module Nic
 
     class Jail < ::Safemode::Jail
       allow :managed?, :subnet, :subnet6, :virtual?, :physical?, :mac, :ip, :ip6, :identifier, :attached_to,
-            :link, :tag, :domain, :vlanid, :bond_options, :attached_devices, :mode,
+            :link, :tag, :domain, :vlanid, :mtu, :bond_options, :attached_devices, :mode,
             :attached_devices_identifiers, :primary, :provision, :alias?, :inheriting_mac,
             :children_mac_addresses, :fqdn, :shortname
+    end
+
+    # include STI inheritance column in audits
+    def self.default_ignored_attributes
+      super - [inheritance_column]
     end
 
     def physical?
@@ -109,7 +116,15 @@ module Nic
     end
 
     def shortname
-      domain.nil? ? name : name.to_s.chomp("." + domain.name)
+      if domain
+        name.to_s.chomp("." + domain.name)
+      elsif domain_id && (unscoped_domain = Domain.unscoped.find_by(id: domain_id))
+        # If domain is nil, but domain_id is set, domain could be
+        # in another taxonomy.  Don't fail to create a correct shortname.
+        name.to_s.chomp("." + unscoped_domain.name)
+      else
+        name
+      end
     end
 
     def validated?
@@ -124,17 +139,13 @@ module Nic
 
     def clone
       # do not copy system specific attributes
-      self.deep_clone(:except  => [:name, :mac, :ip, :ip6, :host_id])
+      self.deep_clone(:except => [:name, :mac, :ip, :ip6, :host_id])
     end
 
     # if this interface does not have MAC and is attached to other interface,
     # we can fetch mac from this other interface
     def inheriting_mac
-      if self.mac.blank?
-        self.host.interfaces.detect { |i| i.identifier == self.attached_to }.try(:mac)
-      else
-        self.mac
-      end
+      self.mac.presence || self.host.interfaces.detect { |i| i.identifier == self.attached_to }.try(:mac)
     end
 
     # if this interface has attached devices (e.g. in a bond),
@@ -147,7 +158,7 @@ module Nic
     # in which case host managed? flag can be true but we should consider
     # everything as unmanaged
     def host_managed?
-      self.host && self.host.managed? && SETTINGS[:unattended]
+      self.host&.managed? && SETTINGS[:unattended]
     end
 
     def require_ip4_validation?(from_compute = true)
@@ -166,7 +177,7 @@ module Nic
 
     def compute_provides_ip?(field)
       return false unless managed? && host_managed? && primary?
-      subnet_field = field == :ip6 ? :subnet6 : :subnet
+      subnet_field = (field == :ip6) ? :subnet6 : :subnet
       host.compute_provides?(field) || host.compute_provides?(:mac) && mac_based_ipam?(subnet_field)
     end
 
@@ -190,6 +201,12 @@ module Nic
       return unless send(subnet_field).present?
       ip_value = send(ip_field)
       ip_value.present? && public_send(subnet_field).contains?(ip_value)
+    end
+
+    def to_audit_label
+      return "#{name} (#{identifier})" if name.present? && identifier.present?
+      return "#{mac} (#{identifier})" if mac.present? && identifier.present?
+      [mac, name, identifier, _('Unnamed')].detect(&:present?)
     end
 
     protected
@@ -217,7 +234,7 @@ module Nic
     end
 
     def not_required_interface
-      if host && host.managed? && !host.being_destroyed?
+      if host&.managed? && !host.being_destroyed?
         if self.primary?
           self.errors.add :primary, _("can't delete primary interface of managed host")
         end
@@ -225,7 +242,7 @@ module Nic
           self.errors.add :provision, _("can't delete provision interface of managed host")
         end
       end
-      !(self.errors[:primary].present? || self.errors[:provision].present?)
+      throw :abort if self.errors[:primary].present? || self.errors[:provision].present?
     end
 
     def exclusive_primary_interface

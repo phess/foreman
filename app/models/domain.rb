@@ -1,6 +1,7 @@
 require "resolv"
 # This models a DNS domain and so represents a site.
 class Domain < ApplicationRecord
+  audited
   include Authorizable
   extend FriendlyId
   friendly_id :name
@@ -10,10 +11,9 @@ class Domain < ApplicationRecord
   include BelongsToProxies
   include ParameterAttributes
 
-  audited
   validates_lengths_from_database
   has_many :hostgroups
-  #order matters! see https://github.com/rails/rails/issues/670
+  # order matters! see https://github.com/rails/rails/issues/670
   before_destroy EnsureNotUsedBy.new(:interfaces, :hostgroups, :subnets)
   has_many :subnet_domains, :dependent => :destroy, :inverse_of => :domain
   has_many :subnets, :through => :subnet_domains
@@ -37,7 +37,7 @@ class Domain < ApplicationRecord
   validates :fullname, :uniqueness => true, :allow_blank => true, :allow_nil => true
 
   scoped_search :on => [:name, :fullname], :complete_value => true
-  scoped_search :relation => :domain_parameters, :on => :value, :on_key=> :name, :complete_value => true, :only_explicit => true, :rename => :params
+  scoped_search :relation => :domain_parameters, :on => :value, :on_key => :name, :complete_value => true, :only_explicit => true, :rename => :params
 
   # with proc support, default_scope can no longer be chained
   # include all default scoping here
@@ -67,7 +67,7 @@ class Domain < ApplicationRecord
   end
 
   def proxy
-    ProxyAPI::DNS.new(:url => dns.url) if dns && !dns.url.blank?
+    ProxyAPI::DNS.new(:url => dns.url) if dns && dns.url.present?
   end
 
   def lookup(query)
@@ -82,9 +82,5 @@ class Domain < ApplicationRecord
   def used_taxonomy_ids(type)
     return [] if new_record?
     Host::Base.joins(:primary_interface).where(:nics => {:domain_id => id}).distinct.pluck(type).compact
-  end
-
-  def hosts_count
-    Host::Managed.authorized(:view_hosts).joins(:primary_interface).where(:nics => {:domain_id => id}).size
   end
 end

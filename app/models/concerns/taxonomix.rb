@@ -13,26 +13,36 @@ module Taxonomix
              :validate => false
     after_initialize :set_current_taxonomy
 
-    scoped_search :relation => :locations, :on => :name, :rename => :location, :complete_value => true
+    scoped_search :relation => :locations, :on => :name, :rename => :location, :complete_value => true, :only_explicit => true
     scoped_search :relation => :locations, :on => :id, :rename => :location_id, :complete_enabled => false, :only_explicit => true, :validator => ScopedSearch::Validators::INTEGER
-    scoped_search :relation => :organizations, :on => :name, :rename => :organization, :complete_value => true
+    scoped_search :relation => :organizations, :on => :name, :rename => :organization, :complete_value => true, :only_explicit => true
     scoped_search :relation => :organizations, :on => :id, :rename => :organization_id, :complete_enabled => false, :only_explicit => true, :validator => ScopedSearch::Validators::INTEGER
 
     dirty_has_many_associations :organizations, :locations
+    audit_associations :organizations, :locations if self.respond_to? :audit_associations
 
     validate :ensure_taxonomies_not_escalated, :if => Proc.new { User.current.nil? || !User.current.admin? }
   end
 
   module ClassMethods
-    attr_accessor :which_ancestry_method, :which_location, :which_organization
+    attr_accessor :which_ancestry_method, :which_location, :which_organization, :which_taxonomy_ignored
 
     # default inner_method includes children (subtree_ids)
-    def with_taxonomy_scope(loc = Location.current, org = Organization.current, inner_method = :subtree_ids)
+    def with_taxonomy_scope(loc = Location.current, org = Organization.current, inner_method = :subtree_ids, which_taxonomy_ignored = [])
       scope = block_given? ? yield : where(nil)
-      return scope unless Taxonomy.enabled_taxonomies.present?
       self.which_ancestry_method = inner_method
-      self.which_location        = Location.expand(loc) if SETTINGS[:locations_enabled]
-      self.which_organization    = Organization.expand(org) if SETTINGS[:organizations_enabled]
+      self.which_taxonomy_ignored = which_taxonomy_ignored
+      if SETTINGS[:locations_enabled] && !which_taxonomy_ignored.include?(:location)
+        self.which_location = Location.expand(loc)
+      else
+        self.which_location = nil
+      end
+
+      if SETTINGS[:organizations_enabled] && !which_taxonomy_ignored.include?(:organization)
+        self.which_organization = Organization.expand(org)
+      else
+        self.which_organization = nil
+      end
       scope = scope_by_taxable_ids(scope)
       scope.readonly(false)
     end
@@ -76,8 +86,8 @@ module Taxonomix
         User.current.try(:admin?)
 
       ids = unscoped.pluck(:id)
-      ids &= inner_ids(loc, Location, inner_method) if SETTINGS[:locations_enabled]
-      ids &= inner_ids(org, Organization, inner_method) if SETTINGS[:organizations_enabled]
+      ids &= inner_ids(loc, Location, inner_method) if SETTINGS[:locations_enabled] && !which_taxonomy_ignored.include?(:location)
+      ids &= inner_ids(org, Organization, inner_method) if SETTINGS[:organizations_enabled] && !which_taxonomy_ignored.include?(:organization)
 
       if self == User
         # In the case of users we want the taxonomy scope to get both the users
@@ -146,8 +156,9 @@ module Taxonomix
 
   def set_current_taxonomy
     if self.new_record? && self.errors.empty?
-      self.locations     << Location.current     if add_current_location?
-      self.organizations << Organization.current if add_current_organization?
+      # we need to use _ids methods so that DirtyAssociations is correctly saved
+      self.location_ids += [ Location.current.id ] if add_current_location?
+      self.organization_ids += [ Organization.current.id ] if add_current_organization?
     end
   end
 
@@ -169,7 +180,7 @@ module Taxonomix
                              raise ArgumentError, "unknown taxonomy #{taxonomy}"
                          end
     current_taxonomy = klass.current
-    Taxonomy.enabled?(taxonomy) && current_taxonomy && !self.send(association).include?(current_taxonomy)
+    current_taxonomy && !self.send(association).include?(current_taxonomy)
   end
 
   def used_location_ids

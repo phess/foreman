@@ -3,7 +3,7 @@ require "mocha/setup"
 
 class ProxyApiBmcTest < ActiveSupport::TestCase
   def setup
-    @url="http://localhost:8443"
+    @url = "http://dummyproxy.theforeman.org:8443"
     @options = {:username => "testuser", :password => "fakepass"}
     @testbmc = ProxyAPI::BMC.new({:user => "admin", :password => "secretpass", :url => @url})
   end
@@ -13,7 +13,7 @@ class ProxyApiBmcTest < ActiveSupport::TestCase
   end
 
   test "base url should equal /bmc" do
-    expected = @url+"/bmc"
+    expected = @url + "/bmc"
     assert_equal(expected, @testbmc.url)
   end
 

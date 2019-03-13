@@ -32,7 +32,7 @@ module SmartProxiesHelper
       actions << link_to_function_if_authorized(_('Expire logs'), "expireLogs(this, (new Date).getTime() / 1000);",
         hash_for_expire_logs_smart_proxy_path(:id => proxy), {
           :data => {
-            :"url" => expire_logs_smart_proxy_path(:id => proxy),
+            :url => expire_logs_smart_proxy_path(:id => proxy),
             :"url-errors" => errors_card_smart_proxy_path(:id => proxy),
             :"url-modules" => modules_card_smart_proxy_path(:id => proxy)
           }
@@ -55,7 +55,7 @@ module SmartProxiesHelper
       ),
       button_group(
         display_delete_if_authorized(hash_for_smart_proxy_path(:id => proxy).merge(:auth_object => proxy, :authorizer => authorizer),
-                                     :data => {:confirm => _("Delete %s?") % proxy.name}, :class => 'btn btn-danger')
+                                     :data => {:confirm => _("Delete %s?") % proxy.name}, :class => 'btn btn-default')
       )
     )
   end

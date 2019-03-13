@@ -3,12 +3,24 @@ require 'test_helper'
 class SubnetTest < ActiveSupport::TestCase
   should validate_presence_of(:network)
   should validate_presence_of(:mask)
+  should validate_presence_of(:mtu)
   should_not validate_uniqueness_of(:network)
   should_not allow_value("asf:fwe6::we6s:q1").for(:network)
   should_not allow_value("asf:fwe6::we6s:q1").for(:mask)
+  should allow_values(10, 100, '200', nil, '').for(:vlanid)
+  should_not allow_value('Bär', -12, 4096).for(:vlanid)
   should belong_to(:tftp)
   should belong_to(:dns)
   should belong_to(:dhcp)
+
+  test 'should sort by vlanid as number' do
+    # ensure we have subnets that would be incorrectly sorted in text sort
+    FactoryBot.create(:subnet_ipv4, vlanid: 3)
+    FactoryBot.create(:subnet_ipv4, vlanid: 33)
+    FactoryBot.create(:subnet_ipv4, vlanid: 4)
+    vlanids = Subnet.all.pluck(:vlanid).reject(&:nil?)
+    assert_equal vlanids, vlanids.map(&:to_i).sort
+  end
 
   test 'should be cast to Subnet::Ipv4 if no type is set' do
     subnet = Subnet.new
@@ -54,13 +66,13 @@ class SubnetTest < ActiveSupport::TestCase
   end
 
   test "the name should be unique in the domain scope" do
-    first = FactoryGirl.create(:subnet_ipv6, :with_domains)
-    subnet = FactoryGirl.build(:subnet_ipv6, :name => first.name, :domains => first.domains)
+    first = FactoryBot.create(:subnet_ipv6, :with_domains)
+    subnet = FactoryBot.build_stubbed(:subnet_ipv6, :name => first.name, :domains => first.domains)
     refute subnet.valid?
   end
 
   test "when to_label is applied should show the domain, the mask and network" do
-    subnet = FactoryGirl.create(:subnet_ipv4,
+    subnet = FactoryBot.create(:subnet_ipv4,
                                 :with_domains,
                                 :name => 'valid',
                                 :network => '123.123.123.0',
@@ -72,7 +84,7 @@ class SubnetTest < ActiveSupport::TestCase
 
   # test module StripWhitespace which strips leading and trailing whitespace on :name field
   test "should strip whitespace on name" do
-    s = FactoryGirl.build(:subnet_ipv6, :name => '    ABC Network     ')
+    s = FactoryBot.build(:subnet_ipv6, :name => '    ABC Network     ')
     assert s.save!
     assert_equal "ABC Network", s.name
   end
@@ -93,23 +105,23 @@ class SubnetTest < ActiveSupport::TestCase
   end
 
   test "should not destroy if hostgroup uses it" do
-    hostgroup = FactoryGirl.create(:hostgroup, :with_subnet)
+    hostgroup = FactoryBot.create(:hostgroup, :with_subnet)
     subnet = hostgroup.subnet
     refute subnet.destroy
     assert_match /is used by/, subnet.errors.full_messages.join("\n")
   end
 
   test "should not destroy if host uses it" do
-    host = FactoryGirl.create(:host, :with_subnet)
+    host = FactoryBot.create(:host, :with_subnet)
     subnet = host.subnet
     refute subnet.destroy
     assert_match /is used by/, subnet.errors.full_messages.join("\n")
   end
 
   test 'smart variable matches on subnet name' do
-    host = FactoryGirl.create(:host, :with_subnet, :puppetclasses => [puppetclasses(:one)])
+    host = FactoryBot.create(:host, :with_subnet, :puppetclasses => [puppetclasses(:one)])
     subnet = host.subnet
-    key = FactoryGirl.create(:variable_lookup_key, :key_type => 'string',
+    key = FactoryBot.create(:variable_lookup_key, :key_type => 'string',
                              :default_value => 'default', :path => "subnet",
                              :puppetclass => puppetclasses(:one))
 
@@ -127,5 +139,26 @@ class SubnetTest < ActiveSupport::TestCase
                                          :element => 'subnet',
                                          :element_name => subnet.name}}},
                  smart_variables)
+  end
+
+  test "should have MTU set to 1500 by default" do
+    assert_equal 1500, Subnet.new.mtu
+  end
+
+  describe '#dns_servers' do
+    test 'should display a list of dns servers' do
+      subnet = FactoryBot.create(:subnet_ipv4, dns_primary: '192.0.2.1', dns_secondary: '192.0.2.2')
+      assert_equal ['192.0.2.1', '192.0.2.2'], subnet.dns_servers
+    end
+
+    test 'should skip empty dns servers' do
+      subnet = FactoryBot.create(:subnet_ipv4, dns_secondary: '192.0.2.1')
+      assert_equal ['192.0.2.1'], subnet.dns_servers
+    end
+
+    test 'should display an empty list if no dns servers are present' do
+      subnet = FactoryBot.create(:subnet_ipv4)
+      assert_equal [], subnet.dns_servers
+    end
   end
 end

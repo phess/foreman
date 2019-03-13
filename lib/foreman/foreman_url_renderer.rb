@@ -8,20 +8,20 @@ module Foreman
       {}
     end
 
-    #returns the URL for Foreman based on the required action
+    # returns the URL for Foreman based on the required action
     def foreman_url(action = 'provision')
       # Get basic stuff
-      config   = URI.parse(Setting[:unattended_url])
+      config = URI.parse(Setting[:unattended_url])
       url_options = foreman_url_options_from_settings_or_request(config)
 
       host = @host
       host = self if @host.nil? && self.class < Host::Base
-      proxy = host.try(:provision_interface).try(:subnet).try(:tftp)
+      template_proxy = host.try(:provision_interface).try(:subnet).try(:template_proxy)
 
-      # use template_url from the request if set, but otherwise look for a Template
+      # Use template_url from the request if set, but otherwise look for a Template
       # feature proxy, as PXE templates are written without an incoming request.
       url = @template_url
-      url ||= foreman_url_from_templates_proxy(proxy) if proxy.present? && proxy.has_feature?('Templates')
+      url ||= foreman_url_from_templates_proxy(template_proxy) if template_proxy.present?
 
       url_options = foreman_url_options_from_url(url) if url.present?
 
@@ -58,7 +58,7 @@ module Foreman
     end
 
     def foreman_url_from_templates_proxy(proxy)
-      url = ProxyAPI::Template.new(:url => proxy.url).template_url
+      url = proxy.template_url
       if url.nil?
         template_logger.warn("unable to obtain template url set by proxy #{proxy.url}. falling back on proxy url.")
         url = proxy.url

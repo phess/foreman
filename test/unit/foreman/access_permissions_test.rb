@@ -15,8 +15,8 @@ class AccessPermissionsTest < ActiveSupport::TestCase
   MAY_SKIP_REQUIRE_LOGIN = [
     "users/login", "users/logout", "users/extlogin", "users/extlogout", "home/status", "notices/destroy",
 
-    # unattended built action is not for interactive use
-    "unattended/built",
+    # unattended built and failed action is not for interactive use
+    "unattended/built", "unattended/failed",
 
     # puppetmaster interfaces
     "fact_values/create", "reports/create",
@@ -35,15 +35,30 @@ class AccessPermissionsTest < ActiveSupport::TestCase
     "api/testable/required_nested_values", "api/testable/optional_nested_values", "api/testable/nested_values",
     "api/v2/testable/index", "api/v2/testable/create", "api/v2/testable/new", "fake/index", "api/v2/fake/index",
 
-    #test stubs
+    # test stubs
     "testable_resources/index",
 
     # Content Security Policy report forwarding endpoint - noop if not configured.
     # See https://github.com/twitter/secureheaders/issues/113
-    "content_security_policy/scribe"
+    "content_security_policy/scribe",
+
+    # table preferences. No special permissions comes with user
+    "api/v2/table_preferences/index", "api/v2/table_preferences/show", "api/v2/table_preferences/create",
+    "api/v2/table_preferences/update", "api/v2/table_preferences/destroy",
+
+    # skip Active Storage controllers
+    # https://github.com/rails/rails/issues/31228
+    "active_storage/blobs/show", "active_storage/direct_uploads/create", "active_storage/disk/show",
+    "active_storage/disk/update", "active_storage/previews/show", "active_storage/representations/show",
+    "active_storage/variants/show",
+
+    # graphql
+    "api/graphql/execute"
   ]
 
   MAY_SKIP_AUTHORIZED = [ "about/index" ]
 
-  check_routes(Rails.application.routes, MAY_SKIP_REQUIRE_LOGIN + MAY_SKIP_AUTHORIZED)
+  SPECIAL_PATH = ['api/v2/puppet_hosts/puppetrun']
+
+  check_routes(Rails.application.routes, MAY_SKIP_REQUIRE_LOGIN + MAY_SKIP_AUTHORIZED + SPECIAL_PATH)
 end

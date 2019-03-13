@@ -1,4 +1,4 @@
-class ChangeFamilyInOs < ActiveRecord::Migration
+class ChangeFamilyInOs < ActiveRecord::Migration[4.2]
   class Operatingsystem < ApplicationRecord; end
 
   def up
@@ -32,7 +32,7 @@ class ChangeFamilyInOs < ActiveRecord::Migration
     families = Operatingsystem.families
 
     ok = true
-    for os in Operatingsystem.all
+    Operatingsystem.all.each do |os|
       if os.family
         say "Converting #{os.family} into #{families.index(os.family.to_s)}"
         os.update_attribute :family_id,     families.index(os.family.to_s)

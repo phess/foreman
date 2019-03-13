@@ -1,4 +1,3 @@
-# encoding: utf-8
 # redMine - project management software
 # Copyright (C) 2006-2008  Jean-Philippe Lang
 #
@@ -25,6 +24,7 @@ class RoleTest < ActiveSupport::TestCase
   should allow_value('a role name').for(:name)
   should allow_value('トメル３４；。').for(:name)
   should allow_value('test@example.com').for(:name)
+  should allow_values(*valid_name_list).for(:name)
 
   it "should strip leading space on name" do
     role = Role.new(:name => " a role name")
@@ -38,7 +38,7 @@ class RoleTest < ActiveSupport::TestCase
 
   it "should delete role who has users" do
     role = Role.create(:name => 'First')
-    user = FactoryGirl.create(:user)
+    user = FactoryBot.create(:user)
     role.users = [user]
     assert_difference('Role.count', -1) do
       role.destroy
@@ -95,7 +95,7 @@ class RoleTest < ActiveSupport::TestCase
     end
 
     it "should be givable even when locked" do
-      user = FactoryGirl.create(:user)
+      user = FactoryBot.create(:user)
       role = roles(:viewer)
       assert role.locked?
       user.roles << role
@@ -114,7 +114,7 @@ class RoleTest < ActiveSupport::TestCase
   end
 
   describe "Cloning" do
-    let(:role) { FactoryGirl.create(:role) }
+    let(:role) { FactoryBot.create(:role) }
     let(:cloned_role) do
       cloned_role = role.clone
       cloned_role.name = "Clone of #{role.name}"
@@ -127,7 +127,7 @@ class RoleTest < ActiveSupport::TestCase
     end
 
     it "allows me to find all roles that were cloned from origin" do
-      another_role = FactoryGirl.create(:role)
+      another_role = FactoryBot.create(:role)
       cloned_role # enforce lazy let to create the cloned role and role
       clones = role.cloned_roles
       assert_include clones, cloned_role
@@ -145,6 +145,18 @@ class RoleTest < ActiveSupport::TestCase
       cloned_role # enforce lazy let to create the cloned role and role
       assert_include Role.cloned, cloned_role
       assert_not_include Role.cloned, role
+    end
+
+    context 'role has some empty filters' do
+      before do
+        role.permissions = [ Permission.first ]
+        role.filters.first.filterings = []
+      end
+
+      it 'clones the role ignoring the empty filters' do
+        assert cloned_role.valid?
+        assert_equal cloned_role.filters.size + 1, role.filters.size
+      end
     end
   end
 
@@ -187,7 +199,7 @@ class RoleTest < ActiveSupport::TestCase
       let(:first) { Role.create(:name => 'First') }
       let(:second) { Role.create(:name => 'Second') }
       before do
-        users(:one).roles<< first
+        users(:one).roles << first
         User.current = users(:one)
       end
 
@@ -196,37 +208,55 @@ class RoleTest < ActiveSupport::TestCase
       it { subject.wont_include(second) }
     end
 
-    context "when current user is admin for_current_user should return all roles" do
-      setup do
-        User.current = users(:admin)
+    context "when current user is admin for_current_user should return all givable roles" do
+      test "Admin user should query Role model with no restrictions" do
+        FactoryBot.create(:role, :name => 'test role', :builtin => 1)
+        roles_for_current = Role.for_current_user.sort
+        roles = Role.where(:builtin => 0).sort
+        assert_equal roles_for_current, roles
+      end
+    end
+
+    context "when current user is not admin" do
+      test "should not allow to escalate when missing escalation permission" do
+        role = Role.create(:name => 'Not owned')
+        User.current = users(:view_hosts)
+
+        refute_includes Role.for_current_user, role
       end
 
-      test "Admin user should query Role model with no restrictions" do
-        Role.expects(:where).with('0 = 0')
-        Role.for_current_user
+      test "should allow to escalate for canned admin" do
+        role = Role.create(:name => 'Not owned by canned admin')
+        User.current = users(:system_admin)
+
+        refute_includes Role.for_current_user, role
       end
     end
   end
 
   describe ".permissions=" do
-    let(:role) { FactoryGirl.build(:role) }
+    let(:role) { FactoryBot.build_stubbed(:role) }
 
     it 'accepts not unique list of permissions' do
-      role.expects(:add_permissions).once.with(['a','b'])
+      role.expects(:add_permissions).once.with(['a', 'b'])
       role.permissions = [
-        FactoryGirl.build(:permission, :name => 'a'),
-        FactoryGirl.build(:permission, :name => 'b'),
-        FactoryGirl.build(:permission, :name => 'a'),
-        FactoryGirl.build(:permission, :name => 'b')
+        FactoryBot.build_stubbed(:permission, :name => 'a'),
+        FactoryBot.build_stubbed(:permission, :name => 'b'),
+        FactoryBot.build_stubbed(:permission, :name => 'a'),
+        FactoryBot.build_stubbed(:permission, :name => 'b')
       ]
     end
   end
 
   describe "#add_permissions" do
     setup do
-      @permission1 = FactoryGirl.create(:permission, :name => 'permission1')
-      @permission2 = FactoryGirl.create(:permission, :architecture, :name => 'permission2')
-      @role = FactoryGirl.build(:role, :permissions => [])
+      @permission1 = FactoryBot.create(:permission, :name => 'permission1')
+      @permission2 = FactoryBot.create(:permission, :architecture, :name => 'permission2')
+      @role = FactoryBot.build_stubbed(:role, :permissions => [])
+    end
+
+    it 'should fetch the appropriate permissions' do
+      assert_equal 2, @role.send(:permission_records, [[@permission1.name, @permission2.name]]).size
     end
 
     it "should build filters with assigned permission" do
@@ -264,9 +294,9 @@ class RoleTest < ActiveSupport::TestCase
 
   describe "#add_permissions!" do
     setup do
-      @permission1 = FactoryGirl.create(:permission, :name => 'permission1')
-      @permission2 = FactoryGirl.create(:permission, :architecture, :name => 'permission2')
-      @role = FactoryGirl.build(:role, :permissions => [])
+      @permission1 = FactoryBot.create(:permission, :name => 'permission1')
+      @permission2 = FactoryBot.create(:permission, :architecture, :name => 'permission2')
+      @role = FactoryBot.build(:role, :permissions => [])
     end
 
     it "persists built permissions" do
@@ -329,12 +359,12 @@ class RoleTest < ActiveSupport::TestCase
 
   context 'having role with filters' do
     setup do
-      @permission1 = FactoryGirl.create(:permission, :domain, :name => 'permission1')
-      @permission2 = FactoryGirl.create(:permission, :architecture, :name => 'permission2')
-      @role = FactoryGirl.build(:role, :permissions => [])
+      @permission1 = FactoryBot.create(:permission, :domain, :name => 'permission1')
+      @permission2 = FactoryBot.create(:permission, :architecture, :name => 'permission2')
+      @role = FactoryBot.build(:role, :permissions => [])
       @role.add_permissions! [@permission1.name, @permission2.name]
-      @org1 = FactoryGirl.create(:organization)
-      @org2 = FactoryGirl.create(:organization)
+      @org1 = FactoryBot.create(:organization)
+      @org2 = FactoryBot.create(:organization)
       @role.filters.reload
       @filter_with_org = @role.filters.detect { |f| f.allows_organization_filtering? }
       @filter_without_org = @role.filters.detect { |f| !f.allows_organization_filtering? }
@@ -354,6 +384,29 @@ class RoleTest < ActiveSupport::TestCase
         @role.save
         @filter_with_org.reload
         assert_empty @filter_with_org.organizations
+      end
+
+      it 'should forced unlimited check if role or filter have no taxonomies' do
+        @role.organizations = [ @org1 ]
+        @role.save
+        @filter_with_org.reload
+        assert @filter_without_org.unlimited?
+        refute @filter_with_org.unlimited?
+        @role.organizations = []
+        @role.save
+        @filter_with_org.reload
+        assert @filter_without_org.unlimited?
+        assert @filter_with_org.unlimited?
+      end
+
+      it 'should rollback when invalid filter was saved' do
+        role = FactoryBot.build(:role)
+        role.add_permissions! :view_domains
+        invalid_filter = role.filters.first
+        invalid_filter.permissions << Permission.where(:name => 'view_subnets')
+        invalid_filter.save(:validate => false)
+        refute role.save
+        assert role.errors[:base].include? "One or more of the associated filters are invalid which prevented the role to be saved"
       end
 
       it 'does not touch filters that do not support taxonomies' do
@@ -389,9 +442,9 @@ class RoleTest < ActiveSupport::TestCase
 
     describe '#search_by_permission' do
       setup do
-        @domain_permission = FactoryGirl.create(:permission, :domain, :name => 'view_test_domain')
-        @arch_permission = FactoryGirl.create(:permission, :architecture, :name => 'view_test_arch')
-        @role = FactoryGirl.build(:role, :permissions => [])
+        @domain_permission = FactoryBot.create(:permission, :domain, :name => 'view_test_domain')
+        @arch_permission = FactoryBot.create(:permission, :architecture, :name => 'view_test_arch')
+        @role = FactoryBot.build(:role, :permissions => [])
         @role.add_permissions! [@domain_permission.name, @arch_permission.name]
       end
 
@@ -418,6 +471,23 @@ class RoleTest < ActiveSupport::TestCase
       it 'allows filtering roles using not in operator on permission' do
         results = Role.search_for('permission !^ view_test_arch')
         refute_includes results, @role
+      end
+    end
+  end
+
+  describe "#for_current_user" do
+    setup do
+      @roles = [Role.find_by_name('Manager')]
+      @user = FactoryBot.create(:user, :admin => false)
+      @role = FactoryBot.create(:role)
+
+      FactoryBot.create(:user_role, :owner => @user, :role => @role)
+      FactoryBot.create(:filter, :role => @role, :permissions => [permissions(:escalate_roles)])
+    end
+
+    it "should display roles" do
+      as_user @user do
+        refute_empty Role.for_current_user
       end
     end
   end

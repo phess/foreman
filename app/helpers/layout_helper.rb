@@ -1,7 +1,67 @@
 module LayoutHelper
+  def mount_layout
+    mount_react_component('Layout', "#layout", layout_data.to_json)
+  end
+
+  def fetch_menus
+    menus_array = [ Menu::Manager.to_hash(:top_menu), Menu::Manager.to_hash(:admin_menu), Menu::Manager.to_hash(:side_menu) ]
+    menus_array << Menu::Manager.to_hash(:labs_menu) if Setting[:lab_features]
+    menus_array << Menu::Manager.to_hash(:devel_menu) if Rails.env.development?
+    menus_array.flatten
+  end
+
+  def taxonomies_booleans
+    { locations: show_location_tab?, organizations: show_organization_tab? }
+  end
+
+  def available_organizations
+    Organization.my_organizations.map do |organization|
+      {id: organization.id, title: organization.title, href: main_app.select_organization_path(organization)}
+    end
+  end
+
+  def available_locations
+    Location.my_locations.map do |location|
+      {id: location.id, title: location.title, href: main_app.select_location_path(location)}
+    end
+  end
+
+  def current_organization
+    Organization&.current&.name
+  end
+
+  def current_location
+    Location&.current&.name
+  end
+
+  def fetch_organizations
+    if show_organization_tab?
+      { current_org: current_organization, available_organizations: available_organizations }
+    end
+  end
+
+  def fetch_locations
+    if show_location_tab?
+      { current_location: current_location, available_locations: available_locations }
+    end
+  end
+
+  def fetch_user
+    { current_user: User.current, user_dropdown: Menu::Manager.to_hash(:side_menu) }
+  end
+
+  def layout_data
+    { menu: fetch_menus,
+      logo: image_path("header_logo.svg", :class => "header-logo"),
+      notification_url: main_app.notification_recipients_path,
+      user: fetch_user, brand: 'foreman',
+      taxonomies: taxonomies_booleans, root: main_app.root_path,
+      locations: fetch_locations, orgs: fetch_organizations }
+  end
+
   def title(page_title, page_header = nil)
     content_for(:title, page_title.to_s)
-    @page_header ||= page_header || @content_for_title || page_title.to_s
+    @page_header ||= page_header || page_title.to_s
   end
 
   def title_actions(*elements)
@@ -9,11 +69,23 @@ module LayoutHelper
   end
 
   def button_group(*elements)
-    content_tag(:div,:class=>"btn-group") { elements.join(" ").html_safe }
+    content_tag(:div, :class => "btn-group") { elements.join(" ").html_safe }
   end
 
   def search_bar(*elements)
     content_for(:search_bar) { elements.join(" ").html_safe }
+  end
+
+  def mount_breadcrumbs(options = {}, &block)
+    options = BreadcrumbsOptions.new(@page_header, controller, action_name, block_given? ? yield : options)
+
+    mount_react_component("BreadcrumbBar", "#breadcrumb", options.bar_props.to_json) if !@welcome && response.ok?
+  end
+
+  def breadcrumbs(options = {}, &block)
+    content_for(:breadcrumbs) do
+      mount_breadcrumbs(options, &block)
+    end
   end
 
   def stylesheet(*args)
@@ -33,7 +105,7 @@ module LayoutHelper
   end
 
   def base_errors_for(obj)
-    unless obj.errors[:base].blank?
+    if obj.errors[:base].present?
       alert :header => _("Unable to save"),
             :class  => 'alert-danger base in fade',
             :text   => obj.errors[:base].map { |e| '<li>'.html_safe + e + '</li>'.html_safe }.join.html_safe
@@ -55,15 +127,15 @@ module LayoutHelper
 
   def icon_text(i, text = "", opts = {})
     opts[:kind] ||= "glyphicon"
-    (content_tag(:span,"", :class=>"#{opts[:kind] + ' ' + opts[:kind]}-#{i} #{opts[:class]}", :title => opts[:title]) + " " + text).html_safe
+    (content_tag(:span, "", :class => "#{opts[:kind] + ' ' + opts[:kind]}-#{i} #{opts[:class]}", :title => opts[:title]) + " " + text).html_safe
   end
 
   def alert(opts = {})
-    opts[:close]  = true if opts[:close].nil?
+    opts[:close] = true if opts[:close].nil?
     opts[:header] ||= _("Warning!")
     opts[:text]   ||= _("Alert")
-    html_class    = "alert #{opts[:class]} "
-    html_class    += 'alert-dismissable' if opts[:close]
+    html_class = "alert #{opts[:class]} "
+    html_class += 'alert-dismissable' if opts[:close]
     content_tag :div, :class => html_class, :id => opts[:id] do
       result = "".html_safe
       result += alert_close if opts[:close]
@@ -77,10 +149,10 @@ module LayoutHelper
   def alert_header(text, html_class = nil)
     case html_class
       when /alert-success/
-        icon = icon_text("ok", "",:kind => "pficon")
+        icon = icon_text("ok", "", :kind => "pficon")
         text ||= _("Notice")
       when /alert-warning/
-        icon = icon_text("warning-triangle-o", "",:kind => "pficon")
+        icon = icon_text("warning-triangle-o", "", :kind => "pficon")
         text ||= _("Warning")
       when /alert-info/
         icon = icon_text("info", "", :kind => "pficon")
@@ -101,7 +173,7 @@ module LayoutHelper
   def trunc_with_tooltip(text, length = 32, tooltip_text = "", shorten = true)
     text = text.to_s.empty? ? tooltip_text.to_s : text.to_s
     tooltip_text = tooltip_text.to_s.empty? ? text : tooltip_text.to_s
-    options = shorten && (text.size < length) ? {} : { :'data-original-title' => tooltip_text, :rel => 'twipsy' }
+    options = (shorten && (text.size < length)) ? {} : { :'data-original-title' => tooltip_text, :rel => 'twipsy' }
     if shorten
       content_tag(:span, truncate(text, :length => length), options).html_safe
     else
@@ -155,12 +227,13 @@ module LayoutHelper
   end
 
   def per_page(collection)
-    [Setting[:entries_per_page], collection.total_entries].min
+    per_page = params[:per_page] ? params[:per_page].to_i : Setting[:entries_per_page]
+    [per_page, collection.total_entries].min
   end
 
   private
 
   def table_css_classes(classes = '')
-    "table table-bordered table-striped " + classes
+    "table table-bordered table-striped table-hover " + classes
   end
 end

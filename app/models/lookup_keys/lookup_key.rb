@@ -1,16 +1,16 @@
 class LookupKey < ApplicationRecord
+  audited :associated_with => :audit_class
   include Authorizable
   include HiddenValue
   include Classification
+  include KeyType
 
-  KEY_TYPES = [N_("string"), N_("boolean"), N_("integer"), N_("real"), N_("array"), N_("hash"), N_("yaml"), N_("json")]
   VALIDATOR_TYPES = [N_("regexp"), N_("list") ]
 
   KEY_DELM = ","
   EQ_DELM  = "="
-  VALUE_REGEX =/\A[^#{KEY_DELM}]+#{EQ_DELM}[^#{KEY_DELM}]+(#{KEY_DELM}[^#{KEY_DELM}]+#{EQ_DELM}[^#{KEY_DELM}]+)*\Z/
+  VALUE_REGEX = /\A[^#{KEY_DELM}]+#{EQ_DELM}[^#{KEY_DELM}]+(#{KEY_DELM}[^#{KEY_DELM}]+#{EQ_DELM}[^#{KEY_DELM}]+)*\Z/
 
-  audited :associated_with => :audit_class
   validates_lengths_from_database
 
   serialize :default_value
@@ -24,10 +24,9 @@ class LookupKey < ApplicationRecord
 
   validates :key, :presence => true
   validates :validator_type, :inclusion => { :in => VALIDATOR_TYPES, :message => N_("invalid")}, :allow_blank => true, :allow_nil => true
-  validates :key_type, :inclusion => {:in => KEY_TYPES, :message => N_("invalid")}, :allow_blank => true, :allow_nil => true
   validates_associated :lookup_values
 
-  before_save :sanitize_path
+  before_validation :sanitize_path
   attr_name :key
 
   def self.inherited(child)
@@ -52,7 +51,6 @@ class LookupKey < ApplicationRecord
   # new methods for API instead of revealing db names
   alias_attribute :parameter, :key
   alias_attribute :variable, :key
-  alias_attribute :parameter_type, :key_type
   alias_attribute :variable_type, :key_type
   alias_attribute :override_value_order, :path
   alias_attribute :override_values, :lookup_values
@@ -86,7 +84,7 @@ class LookupKey < ApplicationRecord
   def to_param
     # to_param is used in views to create a link to the lookup_key.
     # If the key has whitespace in it the link will break so this replaced the whitespace.
-    search_key = key.tr(' ','_') unless key.nil?
+    search_key = key.tr(' ', '_') unless key.nil?
     Parameterizable.parameterize("#{id}-#{search_key}")
   end
 
@@ -95,31 +93,19 @@ class LookupKey < ApplicationRecord
   end
 
   def path
-    path = read_attribute(:path)
-    path.blank? ? array2path(Setting["Default_variables_Lookup_Path"]) : path
+    path = self[:path]
+    path.presence || array2path(Setting["Default_variables_Lookup_Path"])
   end
 
   def path=(v)
     return unless v
-    using_default = v.tr("\r","") == array2path(Setting["Default_variables_Lookup_Path"])
-    write_attribute(:path, using_default ? nil : v)
+    using_default = v.tr("\r", "") == array2path(Setting["Default_variables_Lookup_Path"])
+    self[:path] = using_default ? nil : v
   end
 
   def default_value_before_type_cast
-    return read_attribute(:default_value) if errors[:default_value].present?
-    value_before_type_cast default_value
-  end
-
-  def value_before_type_cast(val)
-    return val if val.nil? || val.contains_erb?
-    case key_type.to_sym
-      when :json, :array
-        val = JSON.dump(val)
-      when :yaml, :hash
-        val = YAML.dump val
-        val.sub!(/\A---\s*$\n/, '')
-    end unless key_type.blank?
-    val
+    return self[:default_value] if errors[:default_value].present?
+    LookupKey.format_value_before_type_cast(default_value, key_type)
   end
 
   def path_elements
@@ -148,14 +134,14 @@ class LookupKey < ApplicationRecord
   end
 
   def sorted_values
-    prio = path.split
-    lookup_values.sort_by{|val| prio.index(val.path)}
+    prio = path.downcase.split
+    lookup_values.sort_by {|val| [prio.index(val.path), val.match]}
   end
 
   private
 
   def sanitize_path
-    self.path = path.tr("\s","").downcase unless path.blank?
+    self.path = path.tr("\s", "").downcase if path.present?
   end
 
   def array2path(array)

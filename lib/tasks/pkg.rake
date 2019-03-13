@@ -9,7 +9,7 @@ namespace :pkg do
     # run 'debuild'
     system 'debuild'
 
-    if $? == 0
+    if $CHILD_STATUS == 0
       # remove 'debian' directory
       FileUtils.rm_r Rake.application.original_dir + '/debian', :force => true
     else
@@ -21,8 +21,12 @@ namespace :pkg do
   task :generate_source do
     File.exist?('pkg') || FileUtils.mkdir('pkg')
     ref = ENV['ref'] || 'HEAD'
-    version = `git show #{ref}:VERSION`.chomp.chomp('-develop')
+    name = 'foreman'
+    version = `git show #{ref}:VERSION`.chomp
     raise "can't find VERSION from #{ref}" if version.empty?
-    `git archive --prefix=foreman-#{version}/ #{ref} | bzip2 -9 > pkg/foreman-#{version}.tar.bz2`
+    filename = "pkg/#{name}-#{version}.tar.bz2"
+    `git archive --prefix=#{name}-#{version}/ #{ref} | bzip2 -9 > #{filename}`
+    raise 'Failed to generate the source archive' if $CHILD_STATUS != 0
+    puts filename
   end
 end

@@ -60,7 +60,7 @@
 # PAGE_SIZE is the number of rows updated in a single transaction.
 # This facilitates tables where the number of rows exceeds the systems
 # memory
-PAGE_SIZE=10000
+PAGE_SIZE = 10000
 
 namespace :db do
   namespace :convert do
@@ -69,11 +69,11 @@ namespace :db do
       # We need unique classes so ActiveRecord can hash different connections
       # We do not want to use the real Model classes because any business
       # rules will likely get in the way of a database transfer
-      class ProductionModelClass < ActiveRecord::Base
+      class ProductionModelClass < ActiveRecord::Base # rubocop:disable Rails/ApplicationRecord
         # disable STI
         self.inheritance_column = :_type_disabled
       end
-      class DevelopmentModelClass < ActiveRecord::Base
+      class DevelopmentModelClass < ActiveRecord::Base # rubocop:disable Rails/ApplicationRecord
         # disable STI
         self.inheritance_column = :_type_disabled
       end
@@ -81,10 +81,10 @@ namespace :db do
       ActiveRecord::Base.establish_connection(:production)
       skip_tables = ["schema_info", "schema_migrations"]
       (ActiveRecord::Base.connection.tables - skip_tables).each do |table_name|
-        time = Time.now
+        time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
         ProductionModelClass.establish_connection(:production)
-        ProductionModelClass.table_name=table_name
+        ProductionModelClass.table_name = table_name
         ProductionModelClass.reset_column_information
 
         DevelopmentModelClass.establish_connection(:development)
@@ -97,7 +97,7 @@ namespace :db do
               end
         DevelopmentModelClass.connection.execute(sql) if sql
 
-        DevelopmentModelClass.table_name=table_name
+        DevelopmentModelClass.table_name = table_name
         DevelopmentModelClass.reset_column_information
         DevelopmentModelClass.record_timestamps = false
 
@@ -115,7 +115,7 @@ namespace :db do
         STDOUT.flush
         # First, delete any old dev data
         DevelopmentModelClass.delete_all
-        until ((models = ProductionModelClass.offset(offset).limit(PAGE_SIZE)).empty?)
+        until (models = ProductionModelClass.offset(offset).limit(PAGE_SIZE)).empty?
 
           count += models.size
           offset += PAGE_SIZE
@@ -148,9 +148,9 @@ namespace :db do
               when /^postgresql/
                 "ALTER TABLE #{table_name} ENABLE TRIGGER ALL;"
               end
-        DevelopmentModelClass.connection.execute(sql) unless sql.blank?
+        DevelopmentModelClass.connection.execute(sql) if sql.present?
 
-        print "#{count} records converted in #{Time.now - time} seconds\n"
+        print "#{count} records converted in #{Process.clock_gettime(Process::CLOCK_MONOTONIC) - time} seconds\n"
       end
     end
   end

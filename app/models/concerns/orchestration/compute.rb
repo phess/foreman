@@ -3,6 +3,7 @@ require 'timeout'
 
 module Orchestration::Compute
   extend ActiveSupport::Concern
+  include Orchestration::Common
 
   included do
     attr_accessor :compute_attributes, :vm
@@ -21,12 +22,13 @@ module Orchestration::Compute
       # this is mostly relevant when the orchestration had a failure, and later on in the ui we try to retrieve the server again.
       # or when the server was removed not via foreman.
     elsif compute_resource_id.present? && compute_attributes
-      compute_resource.new_vm compute_attributes rescue nil
+      compute_resource.new_vm compute_attributes
     end
   end
 
   def compute_provides?(attr)
-    compute? && compute_resource.provided_attributes.keys.include?(attr)
+    return false if compute_resource.nil?
+    compute? && compute_resource.provided_attributes.key?(attr)
   end
 
   def vm_name
@@ -36,24 +38,32 @@ module Orchestration::Compute
   protected
 
   def queue_compute
-    return unless compute? && errors.empty?
+    return log_orchestration_errors unless compute? && errors.empty?
     # Create a new VM if it doesn't already exist or update an existing vm
-    vm_exists? ? queue_compute_create : queue_compute_update
+    vm_exists? ? queue_compute_update : queue_compute_create
   end
 
   def queue_compute_create
-    queue.create(:name   => _("Render user data template for %s") % self, :priority => 1,
-                 :action => [self, :setUserData]) if find_image.try(:user_data)
-    queue.create(:name   => _("Set up compute instance %s") % self, :priority => 2,
+    if find_image.try(:user_data)
+      queue.create(:name   => _("Render user data template for %s") % self, :priority => 2,
+                   :action => [self, :setUserData])
+    end
+    queue.create(:name   => _("Set up compute instance %s") % self, :priority => 3,
                  :action => [self, :setCompute])
-    queue.create(:name   => _("Acquire IP addresses for %s") % self, :priority => 3,
-                 :action => [self, :setComputeIP]) if compute_provides?(:ip) || compute_provides?(:ip6)
-    queue.create(:name   => _("Query instance details for %s") % self, :priority => 4,
+    if compute_provides?(:ip) || compute_provides?(:ip6)
+      queue.create(:name   => _("Acquire IP addresses for %s") % self, :priority => 4,
+                   :action => [self, :setComputeIP])
+    end
+    queue.create(:name   => _("Query instance details for %s") % self, :priority => 5,
                  :action => [self, :setComputeDetails])
-    queue.create(:name   => _("Set IP addresses for %s") % self, :priority => 5,
-                 :action => [self, :setComputeIPAM]) if compute_provides?(:mac) && (mac_based_ipam?(:subnet) || mac_based_ipam?(:subnet6))
-    queue.create(:name   => _("Power up compute instance %s") % self, :priority => 1000,
-                 :action => [self, :setComputePowerUp]) if compute_attributes && compute_attributes[:start] == '1'
+    if compute_provides?(:mac) && (mac_based_ipam?(:subnet) || mac_based_ipam?(:subnet6))
+      queue.create(:name   => _("Set IP addresses for %s") % self, :priority => 6,
+                   :action => [self, :setComputeIPAM])
+    end
+    if compute_attributes && compute_attributes[:start] == '1'
+      queue.create(:name   => _("Power up compute instance %s") % self, :priority => 1000,
+                   :action => [self, :setComputePowerUp])
+    end
   end
 
   def queue_compute_update
@@ -71,6 +81,10 @@ module Orchestration::Compute
 
   def setCompute
     logger.info "Adding Compute instance for #{name}"
+    if compute_attributes.nil?
+      failure _("Failed to find compute attributes, please check if VM %s was deleted") % name
+      return false
+    end
     # TODO: extract the merging into separate class in combination
     # with ComputeAttributesMerge and InterfacesMerge http://projects.theforeman.org/issues/14536
     final_compute_attrs = compute_attributes.merge(compute_resource.host_compute_attrs(self))
@@ -88,14 +102,13 @@ module Orchestration::Compute
     if template.nil?
       failure((_("%{image} needs user data, but %{os_link} is not associated to any provisioning template of the kind user_data. Please associate it with a suitable template or uncheck 'User data' for %{compute_resource_image_link}.") %
       { :image => image.name,
-        :os_link => "<a target='_blank' href='#{url_for(edit_operatingsystem_path(operatingsystem))}'>#{operatingsystem.title}</a>",
+        :os_link => "<a target='_blank' rel='noopener noreferrer' href='#{url_for(edit_operatingsystem_path(operatingsystem))}'>#{operatingsystem.title}</a>",
         :compute_resource_image_link =>
-          "<a target='_blank' href='#{url_for(edit_compute_resource_image_path(:compute_resource_id => compute_resource.id, :id => image.id))}'>#{image.name}</a>"}).html_safe)
+          "<a target='_blank' rel='noopener noreferrer' href='#{url_for(edit_compute_resource_image_path(:compute_resource_id => compute_resource.id, :id => image.id))}'>#{image.name}</a>"}).html_safe)
       return false
     end
 
-    self.compute_attributes[:user_data] = unattended_render(template.template)
-    self.handle_ca
+    self.compute_attributes[:user_data] = render_template(template: template)
 
     return false if errors.any?
     logger.info "Revoked old certificates and enabled autosign for UserData"
@@ -107,7 +120,7 @@ module Orchestration::Compute
     compute_attributes.except!(:user_data) # Unset any badly formatted data
     # since we enable certificates/autosign via here, we also need to make sure we clean it up in case of an error
     if puppetca?
-      respond_to?(:initialize_puppetca,true) && initialize_puppetca && delCertificate && delAutosign
+      respond_to?(:initialize_puppetca, true) && initialize_puppetca && delCertificate && delAutosign
     else
       true
     end
@@ -143,17 +156,18 @@ module Orchestration::Compute
     end
   end
 
-  def delComputeDetails; end
+  def delComputeDetails
+  end
 
   def setComputeIP
     attrs = compute_resource.provided_attributes
-    if attrs.keys.include?(:ip) || attrs.keys.include?(:ip6)
+    if attrs.key?(:ip) || attrs.key?(:ip6)
       logger.info "Waiting for #{name} to become ready"
       compute_resource.vm_ready vm
       logger.info "waiting for instance to acquire ip address"
       vm.wait_for do
-        (attrs.keys.include?(:ip) && self.send(attrs[:ip]).present?) ||
-          (attrs.keys.include?(:ip6) && self.send(attrs[:ip6]).present?) ||
+        (attrs.key?(:ip) && self.send(attrs[:ip]).present?) ||
+          (attrs.key?(:ip6) && self.send(attrs[:ip6]).present?) ||
           self.ip_addresses.present?
       end
     end
@@ -161,7 +175,8 @@ module Orchestration::Compute
     failure _("Failed to get IP for %{name}: %{e}") % { :name => name, :e => e }, e
   end
 
-  def delComputeIP; end
+  def delComputeIP
+  end
 
   def setComputeIPAM
     set_ip_address
@@ -175,7 +190,8 @@ module Orchestration::Compute
     failure _("Failed to set IP for %{name}: %{e}") % { :name => name, :e => e }, e
   end
 
-  def delComputeIPAM; end
+  def delComputeIPAM
+  end
 
   def delCompute
     logger.info "Removing Compute instance for #{name}"
@@ -225,7 +241,7 @@ module Orchestration::Compute
     return nil if compute_attributes.nil?
     image_uuid = compute_attributes[:image_id] || compute_attributes[:image_ref]
     return nil if image_uuid.blank?
-    Image.where(:uuid => image_uuid, :compute_resource_id => compute_resource_id).first
+    Image.find_by(:uuid => image_uuid, :compute_resource_id => compute_resource_id)
   end
 
   def validate_compute_provisioning
@@ -279,7 +295,7 @@ module Orchestration::Compute
   end
 
   def filter_ip_addresses(addresses, type)
-    check_method = type == :ip6 ? :ipv6? : :ipv4?
+    check_method = (type == :ip6) ? :ipv6? : :ipv4?
     addresses.map {|ip| IPAddr.new(ip) rescue nil}.compact.select(&check_method).map(&:to_s)
   end
 
@@ -343,13 +359,14 @@ module Orchestration::Compute
 
       # validate_foreman_attr handles the failure msg, so we just bubble
       # the false state up the stack
-      return false unless validate_required_foreman_attr(mac,Nic::Base.physical,:mac)
+      return false unless validate_required_foreman_attr(mac, Nic::Base.physical, :mac)
     end
     true
   end
 
   def vm_exists?
-    return true unless compute_object
-    !compute_object.persisted?
+    vm = compute_object
+    return false unless vm
+    vm.persisted?
   end
 end

@@ -6,23 +6,16 @@ module TemplatesHelper
   end
 
   def default_template_description
-    if locations_only?
-      _("Default templates are automatically added to new locations")
-    elsif organizations_only?
-      _("Default templates are automatically added to new organizations")
-    elsif locations_and_organizations?
-      _("Default templates are automatically added to new organizations and locations")
-    end
+    _("Default templates are automatically added to new organizations and locations")
   end
 
   def show_default?
-    rights = Taxonomy.enabled_taxonomies.select { |taxonomy| User.current.can?("create_#{taxonomy}".to_sym) }
-    rights.all? && !rights.blank?
+    User.current.can?(:create_oragnizations) && User.current.can?(:create_locations)
   end
 
   def safemode_methods
     @@safemode_methods ||= begin
-      objects = ObjectSpace.each_object(Class).select{|x| x < Safemode::Jail }
+      objects = ObjectSpace.each_object(Class).select {|x| x < Safemode::Jail }
       objects_with_methods = objects.map do |obj|
         [obj.name.gsub(/::Jail$/, ''), obj.allowed_methods.sort.join(' ')]
       end
@@ -31,11 +24,11 @@ module TemplatesHelper
   end
 
   def safemode_helpers
-    @@safemode_helpers ||= Foreman::Renderer::ALLOWED_HELPERS.sort.join(' ')
+    @@safemode_helpers ||= Foreman::Renderer.config.allowed_helpers.sort.join(' ')
   end
 
   def safemode_variables
-    @@safemode_variables ||= Foreman::Renderer::ALLOWED_VARIABLES.sort.map{|x| "@#{x}"}.join(' ')
+    @@safemode_variables ||= Foreman::Renderer.config.allowed_variables.sort.map {|x| "@#{x}"}.join(' ')
   end
 
   def locked_warning(template)
@@ -45,5 +38,19 @@ module TemplatesHelper
                             template_hash_for_member(template, 'clone_template'))
 
     alert(:class => 'alert-warning', :text => warning_text.html_safe)
+  end
+
+  def template_input_header(f, template)
+    header = _('Template input')
+    unless template.locked?
+      header += ' ' + remove_child_link('x', f, {:rel => 'twipsy', :'data-title' => _('remove template input'), :'data-placement' => 'left',
+                                                 :class => 'fr badge badge-danger'})
+    end
+    header.html_safe
+  end
+
+  def template_input_types_options(keys = TemplateInput::TYPES.keys)
+    keys.map!(&:to_s)
+    TemplateInput::TYPES.select { |k, _| keys.include?(k.to_s) }.map { |key, name| [ _(name), key ] }
   end
 end

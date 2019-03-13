@@ -1,12 +1,15 @@
 import $ from 'jquery';
 import URI from 'urijs';
+import { translate as __ } from './react_app/common/I18n';
+
+import { showLoading, hideLoading } from './foreman_navigation';
 
 export function showSpinner() {
-  $('#turbolinks-progress').show();
+  showLoading();
 }
 
 export function hideSpinner() {
-  $('#turbolinks-progress').hide();
+  hideLoading();
 }
 
 export function iconText(name, innerText, iconClass) {
@@ -19,38 +22,55 @@ export function iconText(name, innerText, iconClass) {
 }
 
 export function activateDatatables() {
-  $('[data-table=inline]').not('.dataTable').DataTable({
-      dom: "<'row'<'col-md-6'f>r>t<'row'<'col-md-6'i><'col-md-6'p>>"
-  });
-
-  $('[data-table=server]').not('.dataTable').each((i, el) => {
-    const url = el.getAttribute('data-source');
-
-    $(el).DataTable({
-      processing: true,
-      serverSide: true,
-      ordering: false,
-      ajax: url,
-      dom: "<'row'<'col-md-6'f>r>t<'row'<'col-md-6'><'col-md-6'p>>"
+  $('[data-table=inline]')
+    .not('.dataTable')
+    .DataTable({
+      language: {
+        searchPlaceholder: __('Filter...'),
+      },
+      dom: "<'row'<'col-md-6'f>r>t<'row'<'col-md-6'i><'col-md-6'p>>",
     });
-  });
+
+  $('[data-table=server]')
+    .not('.dataTable')
+    .each((i, el) => {
+      const url = el.getAttribute('data-source');
+
+      $(el).DataTable({
+        language: {
+          searchPlaceholder: __('Filter...'),
+        },
+        processing: true,
+        serverSide: true,
+        ordering: false,
+        ajax: url,
+        dom: "<'row'<'col-md-6'f>r>t<'row'<'col-md-6'><'col-md-6'p>>",
+      });
+    });
 }
 
-export function activateTooltips(el = 'body') {
-  el = $(el);
+export function activateTooltips(elParam = 'body') {
+  const el = $(elParam);
   el.find('[rel="twipsy"]').tooltip({ container: 'body' });
-  el.find('.ellipsis').tooltip({ container: 'body', title: function () {
-                                   return (this.scrollWidth > this.clientWidth ?
-                                           this.textContent : null);
-                                   }
-                              });
-  el.find('*[title]').not('*[rel]').tooltip({ container: 'body' });
-  $(document).on('page:restore', () => {$('.tooltip.in').remove();});
+  el.find('.ellipsis').tooltip({
+    container: 'body',
+    title() {
+      return this.scrollWidth > this.clientWidth ? this.textContent : null;
+    },
+  });
+  el.find('*[title]')
+    .not('*[rel],.fa,.pficon')
+    .tooltip({ container: 'body' });
+  $(document).on('page:restore', () => {
+    $('.tooltip.in').remove();
+  });
 }
 
 /* eslint-disable no-console, max-len */
-export function deprecate(oldMethod, newMethod, version = '1.17') {
-  console.warn(`DEPRECATION WARNING: you are using deprecated ${oldMethod}, it will be removed in Foreman ${version}. Use ${newMethod} instead.`);
+export function deprecate(oldMethod, newMethod, version = '1.22') {
+  console.warn(
+    `DEPRECATION WARNING: you are using deprecated ${oldMethod}, it will be removed in Foreman ${version}. Use ${newMethod} instead.`
+  );
 }
 
 export function initTypeAheadSelect(input) {
@@ -61,48 +81,69 @@ export function initTypeAheadSelect(input) {
       quietMillis: 250,
       data: (term, page) => ({
         q: term,
-        scope: input.data('scope')
+        scope: input.data('scope'),
       }),
-      results: (data) => ({results: data.map(({id, name}) => ({id, text: name}))}),
-      cache: true
+      results: data => ({
+        results: data.map(({ id, name }) => ({ id, text: name })),
+      }),
+      cache: true,
     },
-    initSelection: function (element, callback) {
+    initSelection(element, callback) {
       $.ajax(input.data('url'), {
         data: {
-          scope: input.data('scope')
+          scope: input.data('scope'),
         },
-        dataType: 'json'
-      }).done((data) => {
+        dataType: 'json',
+      }).done(data => {
         if (data.length > 0) {
-          callback({id: data[0].id, text: data[0].name});
+          // eslint-disable-next-line standard/no-callback-literal
+          callback({ id: data[0].id, text: data[0].name });
         }
       });
     },
-    width: '400px'
+    width: '400px',
   });
 }
 
 // handle table updates via turoblinks
 export function updateTable(element) {
-  let uri = new URI(window.location.href);
-  let search, perPage, pageNum;
+  const uri = new URI(window.location.href);
 
-  if (element !== undefined) {
-    search = $(element).find('.autocomplete-input').val() || $('#search-form').find('.autocomplete-input').val();
-    if (search !== undefined) {
-      uri.setSearch('search', search.trim());
-    }
-  }
-  perPage = $('#per_page').val();
-  if (perPage !== undefined) {
-    uri.setSearch('per_page', perPage);
+  const values = {};
+
+  if (['per_page', 'search-form'].includes(element.id)) {
+    values.page = '1';
+  } else {
+    values.page = $('#cur_page_num').val();
   }
 
-  pageNum = $('#cur_page_num').val();
-  if (pageNum !== undefined) {
-    uri.setSearch('page', pageNum);
+  const searchTerm = $(element)
+    .find('.autocomplete-input')
+    .val();
+  if (searchTerm !== undefined) {
+    values.search = searchTerm.trim();
   }
+  values.per_page = $('#pagination-row-dropdown')
+    .text()
+    .trim();
+  uri.setSearch(values);
   /* eslint-disable no-undef */
   Turbolinks.visit(uri.toString());
   return false;
+}
+
+export function deprecateObjectProperty(
+  obj,
+  oldProp,
+  newProp,
+  version = '1.20'
+) {
+  const oldPropPointer = obj[oldProp];
+
+  Object.defineProperty(obj, oldProp, {
+    get: () => {
+      deprecate(oldProp, newProp, version);
+      return oldPropPointer;
+    },
+  });
 }

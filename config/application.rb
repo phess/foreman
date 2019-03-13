@@ -1,20 +1,20 @@
 if defined?(Rake.application) && Rake.application.top_level_tasks.grep(/jenkins/).any?
   ENV['RAILS_ENV'] ||= 'test'
 end
-require File.expand_path('../boot', __FILE__)
+require File.expand_path('boot', __dir__)
 require 'apipie/middleware/checksum_in_headers'
 require 'rails/all'
 
-require File.expand_path('../../config/settings', __FILE__)
-require File.expand_path('../../lib/foreman/dynflow', __FILE__)
+require File.expand_path('../config/settings', __dir__)
+require File.expand_path('../lib/foreman/dynflow', __dir__)
 
-if File.exist?(File.expand_path('../../Gemfile.in', __FILE__))
+if File.exist?(File.expand_path('../Gemfile.in', __dir__))
   # If there is a Gemfile.in file, we will not use Bundler but BundlerExt
   # gem which parses this file and loads all dependencies from the system
   # rathern then trying to download them from rubygems.org. It always
   # loads all gemfile groups.
   require 'bundler_ext'
-  BundlerExt.system_require(File.expand_path('../../Gemfile.in', __FILE__), :all)
+  BundlerExt.system_require(File.expand_path('../Gemfile.in', __dir__), :all)
 
   class Foreman::Consoletie < Rails::Railtie
     console { Foreman.setup_console }
@@ -35,13 +35,15 @@ else
       end
     end
     Bundler.require(*Rails.groups)
+    optional_bundler_groups = %w[assets]
     if SETTINGS[:unattended]
-      %w[ec2 fog gce libvirt openstack ovirt rackspace vmware].each do |group|
-        begin
-          Bundler.require(group)
-        rescue LoadError
-          # ignoring intentionally
-        end
+      optional_bundler_groups += %w[ec2 fog gce libvirt openstack ovirt rackspace vmware]
+    end
+    optional_bundler_groups.each do |group|
+      begin
+        Bundler.require(group)
+      rescue LoadError
+        # ignoring intentionally
       end
     end
   end
@@ -51,20 +53,21 @@ end
 # load the corresponding bit of fog
 require 'fog/ovirt' if defined?(::OVIRT)
 
-require_dependency File.expand_path('../../app/models/application_record.rb', __FILE__)
-require_dependency File.expand_path('../../lib/foreman.rb', __FILE__)
-require_dependency File.expand_path('../../lib/timed_cached_store.rb', __FILE__)
-require_dependency File.expand_path('../../lib/foreman/exception', __FILE__)
-require_dependency File.expand_path('../../lib/core_extensions', __FILE__)
-require_dependency File.expand_path('../../lib/foreman/logging', __FILE__)
-require_dependency File.expand_path('../../lib/foreman/http_proxy', __FILE__)
-require_dependency File.expand_path('../../lib/middleware/catch_json_parse_errors', __FILE__)
-require_dependency File.expand_path('../../lib/middleware/tagged_logging', __FILE__)
-require_dependency File.expand_path('../../lib/middleware/session_safe_logging', __FILE__)
+require_dependency File.expand_path('../app/models/application_record.rb', __dir__)
+require_dependency File.expand_path('../lib/foreman.rb', __dir__)
+require_dependency File.expand_path('../lib/timed_cached_store.rb', __dir__)
+require_dependency File.expand_path('../lib/foreman/exception', __dir__)
+require_dependency File.expand_path('../lib/core_extensions', __dir__)
+require_dependency File.expand_path('../lib/foreman/logging', __dir__)
+require_dependency File.expand_path('../lib/foreman/http_proxy', __dir__)
+require_dependency File.expand_path('../lib/foreman/middleware/catch_json_parse_errors', __dir__)
+require_dependency File.expand_path('../lib/foreman/middleware/logging_context_request', __dir__)
+require_dependency File.expand_path('../lib/foreman/middleware/logging_context_session', __dir__)
+require_dependency File.expand_path('../lib/foreman/middleware/telemetry', __dir__)
 
 if SETTINGS[:support_jsonp]
-  if File.exist?(File.expand_path('../../Gemfile.in', __FILE__))
-    BundlerExt.system_require(File.expand_path('../../Gemfile.in', __FILE__), :jsonp)
+  if File.exist?(File.expand_path('../Gemfile.in', __dir__))
+    BundlerExt.system_require(File.expand_path('../Gemfile.in', __dir__), :jsonp)
   else
     Bundler.require(:jsonp)
   end
@@ -85,7 +88,7 @@ module Foreman
     # config.autoload_paths += %W(#{config.root}/extras)
     config.autoload_paths += Dir["#{config.root}/lib"]
     config.autoload_paths += Dir["#{config.root}/app/controllers/concerns"]
-    config.autoload_paths += Dir[ Rails.root.join('app', 'models', 'power_manager') ]
+    config.autoload_paths += Dir[Rails.root.join('app', 'models', 'power_manager')]
     config.autoload_paths += Dir["#{config.root}/app/models/concerns"]
     config.autoload_paths += Dir["#{config.root}/app/services"]
     config.autoload_paths += Dir["#{config.root}/app/mailers"]
@@ -136,13 +139,20 @@ module Foreman
     # Enable escaping HTML in JSON.
     config.active_support.escape_html_entities_in_json = true
 
+    # Don't raise exception for common parameters
+    config.action_controller.always_permitted_parameters = %w(
+      controller action format locale utf8 _method authenticity_token commit redirect
+      page per_page paginate search order sort sort_by sort_order
+      _ _ie_support fakepassword apiv id organization_id location_id user_id
+    )
+
     # Use SQL instead of Active Record's schema dumper when creating the database.
     # This is necessary if your schema can't be completely dumped by the schema dumper,
     # like if you have constraints or database-specific column types
     # config.active_record.schema_format = :sql
 
     # enables in memory cache store with ttl
-    #config.cache_store = TimedCachedStore.new
+    # config.cache_store = TimedCachedStore.new
     config.cache_store = :file_store, Rails.root.join("tmp", "cache")
 
     # enables JSONP support in the Rack middleware
@@ -158,8 +168,14 @@ module Foreman
       nil
     end
 
-    # Do not swallow errors in after_commit/after_rollback callbacks.
-    config.active_record.raise_in_transactional_callbacks = true
+    begin
+      if SETTINGS[:telemetry].try(:fetch, :prometheus).try(:fetch, :enabled)
+        require 'prometheus/middleware/exporter'
+        config.middleware.use Prometheus::Middleware::Exporter
+      end
+    rescue LoadError, KeyError
+      # not configured or bundler group 'telemetry' was disabled
+    end
 
     # Enable the asset pipeline
     config.assets.enabled = true
@@ -171,18 +187,17 @@ module Foreman
     config.assets.quiet = true
 
     # Catching Invalid JSON Parse Errors with Rack Middleware
-    if Rails::VERSION::MAJOR == 4
-      config.middleware.insert_before ActionDispatch::ParamsParser, Middleware::CatchJsonParseErrors
-    else
-      config.middleware.use Middleware::CatchJsonParseErrors
-    end
+    config.middleware.use Foreman::Middleware::CatchJsonParseErrors
 
-    # Record request ID in logging MDC storage
-    config.middleware.insert_before Rails::Rack::Logger, Middleware::TaggedLogging
-    config.middleware.insert_after ActionDispatch::Session::ActiveRecordStore, Middleware::SessionSafeLogging
+    # Record request and session tokens in logging MDC
+    config.middleware.insert_before Rails::Rack::Logger, Foreman::Middleware::LoggingContextRequest
+    config.middleware.insert_after ActionDispatch::Session::ActiveRecordStore, Foreman::Middleware::LoggingContextSession
 
     # Add apidoc hash in headers for smarter caching
     config.middleware.use Apipie::Middleware::ChecksumInHeaders
+
+    # Add telemetry
+    config.middleware.use Foreman::Middleware::Telemetry
 
     # New config option to opt out of params "deep munging" that was used to address security vulnerability CVE-2013-0155.
     config.action_dispatch.perform_deep_munge = false
@@ -207,7 +222,9 @@ module Foreman
       :templates => {:enabled => true},
       :notifications => {:enabled => true},
       :background => {:enabled => true},
-      :dynflow => {:enabled => true}
+      :dynflow => {:enabled => true},
+      :telemetry => {:enabled => false},
+      :blob => {:enabled => false}
     ))
 
     config.logger = Foreman::Logging.logger('app')
@@ -215,7 +232,7 @@ module Foreman
     config.log_level = Foreman::Logging.logger_level('app').to_sym
     config.active_record.logger = Foreman::Logging.logger('sql')
 
-    if config.serve_static_files
+    if config.public_file_server.enabled
       ::Rails::Engine.subclasses.map(&:instance).each do |engine|
         if File.exist?("#{engine.root}/public/assets")
           config.middleware.use ::ActionDispatch::Static, "#{engine.root}/public"
@@ -223,7 +240,20 @@ module Foreman
       end
     end
 
+    if Array(SETTINGS[:cors_domains]).present?
+      config.middleware.insert_before 0, Rack::Cors do
+        allow do
+          origins Array(SETTINGS[:cors_domains])
+          resource '*', headers: :any, methods: [:get, :post, :options]
+        end
+      end
+    end
+
     config.to_prepare do
+      # AuditExtensions contain code from app/ so can only be loaded after initializing is done
+      # otherwise rails auto-reloader won't be able to reload Taxonomies which are linked there
+      Audit.send(:include, AuditExtensions)
+
       ApplicationController.descendants.each do |child|
         # reinclude the helper module in case some plugin extended some in the to_prepare phase,
         # after the module was already included into controllers
@@ -241,22 +271,46 @@ module Foreman
     # Use the database for sessions instead of the cookie-based default
     config.session_store :active_record_store, :secure => !!SETTINGS[:require_ssl]
 
+    # We need to mount the sprockets engine before we use the routes_reloader
+    initializer(:mount_sprocket_env, :before => :sooner_routes_load) do
+      if config.assets.compile
+        app = Rails.application
+        if Sprockets::Railtie.instance.respond_to?(:build_environment)
+          app.assets = Sprockets::Railtie.instance.build_environment(app, true)
+        end
+        routes.prepend do
+          mount app.assets => app.config.assets.prefix
+        end
+      end
+    end
+
+    # We use the routes_reloader before the to_prepare and eager_load callbacks
+    # to make the routes load sooner than the controllers. Otherwise, the definition
+    # of named routes helpers in the module significantly slows down the startup
+    # of the application. Switching the order helps a lot.
+    initializer(:sooner_routes_load, :before => :run_prepare_callbacks) do
+      routes_reloader.execute_if_updated
+    end
+
+    config.after_initialize do
+      init_dynflow unless Foreman.in_rake?('db:create') || Foreman.in_rake?('db:drop')
+      setup_auditing
+    end
+
     def dynflow
       return @dynflow if @dynflow.present?
       @dynflow =
         if defined?(ForemanTasks)
           ForemanTasks.dynflow
         else
-          ::Dynflow::Rails.new(nil, Foreman::Dynflow::Configuration.new)
+          ::Dynflow::Rails.new(nil, ::Foreman::Dynflow::Configuration.new)
         end
       @dynflow.require!
       @dynflow
     end
 
-    config.after_initialize do
-      dynflow = Rails.application.dynflow
+    def init_dynflow
       dynflow.eager_load_actions!
-      dynflow.config.increase_db_pool_size
 
       unless dynflow.config.lazy_initialization
         if defined?(PhusionPassenger)
@@ -268,10 +322,14 @@ module Foreman
         end
       end
     end
+
+    def setup_auditing
+      Audit.send(:include, AuditSearch)
+    end
   end
 
   def self.setup_console
-    ENV['IRBRC'] = File.expand_path('../irbrc', __FILE__)
+    ENV['IRBRC'] = File.expand_path('irbrc', __dir__)
     User.current = User.anonymous_console_admin
     Rails.logger.warn "Console started with '#{User.current.login}' user, call User.current= to change it"
   end

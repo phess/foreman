@@ -15,9 +15,10 @@ module Classification
       #   :skip_fqdn => true, if there is no need to calculate values specified directly for the host.
       # returns: ClassificationResult instance.
       def values_hash(host, keys, options = {})
-        values = Hash.new { |h,k| h[k] = {} }
+        lookup_values_cache = lookup_values(host, keys)
+        values = Hash.new { |h, k| h[k] = {} }
         keys.each do |key|
-          value = calculate_value(key, lookup_values_cache(host, keys), options)
+          value = calculate_value(key, lookup_values_cache, options)
           values[key.id][key.key] = value if value.present?
         end
         Classification::ClassificationResult.new(values, host)
@@ -25,12 +26,12 @@ module Classification
 
       private
 
-      def lookup_values_cache(host, keys)
+      def lookup_values(host, keys)
         LookupValue.where(:match => Classification::MatchesGenerator.matches(host, keys)).where(:lookup_key_id => keys).includes(:lookup_key).to_a
       end
 
       def calculate_value(key, lookup_values_cache, options)
-        lookup_values_for_key = lookup_values_cache.select{|i| i.lookup_key_id == key.id}
+        lookup_values_for_key = lookup_values_cache.select {|i| i.lookup_key_id == key.id}
         sorted_lookup_values = sort_lookup_values(key, lookup_values_for_key)
         value = nil
         if key.merge_overrides
@@ -60,7 +61,7 @@ module Classification
         lookup_values.sort_by do |lv|
           matcher_key, matcher_value = split_matcher(lv)
           # prefer matchers in order of the path, then more specific matches (i.e. hostgroup children)
-          [key.path.index(matcher_key.chomp(',')), -1 * matcher_value.length]
+          [key.path.split.index(matcher_key.chomp(',')), -1 * matcher_value.length]
         end
       end
 
@@ -94,7 +95,7 @@ module Classification
         computed_lookup_value = nil
         lookup_values.each do |lookup_value|
           element, element_name = get_element_and_element_name(lookup_value)
-          next if (options[:skip_fqdn] && element=="fqdn")
+          next if (options[:skip_fqdn] && element == "fqdn")
           computed_lookup_value = compute_lookup_value(lookup_value, element, element_name)
           computed_lookup_value[:managed] = lookup_value.omit if lookup_value.lookup_key.puppet?
           break
@@ -128,7 +129,7 @@ module Classification
       end
 
       def skip_value?(element, lookup_value, options)
-        ((options[:skip_fqdn] && element=="fqdn") || lookup_value.omit)
+        ((options[:skip_fqdn] && element == "fqdn") || lookup_value.omit)
       end
 
       def accumulate_value(values, lookup_value, should_avoid_duplicates)

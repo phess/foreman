@@ -27,7 +27,7 @@ module ComputeResourcesHelper
   def power_action_html(vm)
     if vm.ready?
       {
-        :data => { :confirm =>_("Are you sure you want to power %{act} %{vm}?") % { :act => action_string(vm).downcase.strip, :vm => vm }},
+        :data => { :confirm => _("Are you sure you want to power %{act} %{vm}?") % { :act => action_string(vm).downcase.strip, :vm => vm }},
         :class => "btn btn-danger"
       }
     else
@@ -48,7 +48,7 @@ module ComputeResourcesHelper
       { :class => "btn btn-info" }
     else
       {
-        :data => { :confirm =>_("Are you sure you want to %{act} %{vm}?") % { :act => pause_action, :vm => vm } },
+        :data => { :confirm => _("Are you sure you want to %{act} %{vm}?") % { :act => pause_action, :vm => vm } },
         :class => "btn btn-danger"
       }
     end
@@ -67,7 +67,7 @@ module ComputeResourcesHelper
     return [] unless compute.uuid || controller.action_name == 'test_connection'
     compute.datacenters
   rescue Foreman::FingerprintException => e
-    compute.errors[:pubkey_hash] = e
+    compute.errors.add(:pubkey_hash, e.message)
     []
   rescue => e
     Foreman::Logging.exception("Failed listing datacenters", e)
@@ -82,14 +82,14 @@ module ComputeResourcesHelper
   end
 
   def unset_password?
-    action_name == "edit" || action_name == "test_connection"
+    action_name == "edit" || (action_name == "test_connection" && params[:cr_id].present?)
   end
 
   def test_connection_button_f(f, success, caption = nil)
     caption ||= _("Test Connection")
     btn_class = success ? 'btn-success' : 'btn-default'
     spinner_class = success ? 'spinner-inverse' : nil
-    spinner_button_f(f, caption, "testConnection(this)",
+    spinner_button_f(f, caption, "tfm.computeResource.testConnection(this)",
                      :id => 'test_connection_button',
                      :spinner_id => 'test_connection_indicator',
                      :class => btn_class,
@@ -104,5 +104,12 @@ module ComputeResourcesHelper
 
   def load_datacenters_button_f(f, success)
     load_button_f(f, success, _("Load Datacenters"))
+  end
+
+  def http_proxy_field(f)
+    select_f(f, :http_proxy_id, HttpProxy.all, :id, :name,
+                           {:include_blank => true },
+                           { :label => _("HTTP Proxy") }
+                      )
   end
 end

@@ -44,9 +44,11 @@ class RolesController < ApplicationController
   end
 
   def clone
-    @cloned_role      = true
-    @original_role_id = @role.id
+    @cloned_role = true
+    @original_role = @role
     @role = Role.new
+    @role.locations = @original_role.locations
+    @role.organizations = @original_role.organizations
     render :action => :new
   end
 
@@ -54,7 +56,7 @@ class RolesController < ApplicationController
   end
 
   def update
-    if @role.update_attributes(role_params)
+    if @role.update(role_params)
       process_success
     else
       process_error

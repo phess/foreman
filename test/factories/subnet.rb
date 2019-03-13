@@ -1,16 +1,20 @@
-FactoryGirl.define do
+FactoryBot.define do
   factory :subnet_parameter, :parent => :parameter, :class => SubnetParameter do
-    type 'SubnetParameter'
+    type { 'SubnetParameter' }
   end
 
   factory :subnet do
     sequence(:name) {|n| "subnet#{n}" }
-    ipam "None"
-    organizations { [Organization.find_by_name('Organization 1')] } if SETTINGS[:organizations_enabled]
-    locations { [Location.find_by_name('Location 1')] } if SETTINGS[:locations_enabled]
+    ipam { "None" }
+    organizations { [Organization.find_by_name('Organization 1')] }
+    locations { [Location.find_by_name('Location 1')] }
 
     trait :tftp do
       association :tftp, :factory => :template_smart_proxy
+    end
+
+    trait :httpboot do
+      association :httpboot, :factory => :template_smart_proxy
     end
 
     trait :dhcp do
@@ -21,23 +25,27 @@ FactoryGirl.define do
       association :dns, :factory => :dns_smart_proxy
     end
 
+    trait :template do
+      association :template, :factory => :template_smart_proxy
+    end
+
     trait :with_domains do
       transient do
-        domains_count 2
+        domains_count { 2 }
       end
 
       after(:create) do |subnet, evaluator|
-        FactoryGirl.create_list(:domain, evaluator.domains_count, :subnets => [subnet])
+        FactoryBot.create_list(:domain, evaluator.domains_count, :subnets => [subnet])
       end
     end
 
     trait :ipam_db do
-      ipam "Internal DB"
+      ipam { "Internal DB" }
     end
 
     trait :with_taxonomies do
-      locations { [FactoryGirl.create(:location)] }
-      organizations { [FactoryGirl.create(:organization)] }
+      locations { [FactoryBot.create(:location)] }
+      organizations { [FactoryBot.create(:organization)] }
     end
 
     factory :subnet_ipv4, :class => Subnet::Ipv4 do
@@ -47,12 +55,12 @@ FactoryGirl.define do
       factory :subnet_ipv4_with_domains, :traits => [:with_domains]
 
       trait :ipam_dhcp do
-        ipam "DHCP"
+        ipam { "DHCP" }
       end
 
       trait :with_parameter do
-        after(:create) do |subnet,evaluator|
-          FactoryGirl.create(:subnet_parameter, :subnet => subnet)
+        after(:create) do |subnet, evaluator|
+          FactoryBot.create(:subnet_parameter, :subnet => subnet)
         end
       end
     end

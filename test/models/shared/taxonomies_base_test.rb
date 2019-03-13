@@ -49,14 +49,27 @@ module TaxonomiesBaseTest
       assert taxonomy.valid?
     end
 
+    test 'it should allow assigning invalid opposite_taxonomy' do
+      taxonomy = FactoryBot.build(:"#{taxonomy_name}")
+      domain = FactoryBot.build(:domain)
+      # this makes taxonomy invalid since it has a host in a domain that isn't assigned to it:
+      FactoryBot.create(:host, :domain => domain, :"#{taxonomy_name}" => taxonomy)
+      refute taxonomy.valid?
+      opposite = FactoryBot.build(:"#{opposite_taxonomy}", :"#{taxonomy_name}_ids" => [taxonomy.id])
+      assert opposite.valid?
+    end
+
     test 'it should return array of used ids by hosts' do
       taxonomy = taxonomies(:"#{taxonomy_name}1")
-      subnet = FactoryGirl.create(:subnet_ipv4,
+      subnet = FactoryBot.build(:subnet_ipv4,
                                   :"#{opposite_taxonomy}_ids" => [],
                                   :"#{taxonomy_name.pluralize}" => [taxonomy])
-      domain = FactoryGirl.create(:domain)
-      FactoryGirl.create(:host,
-                         :compute_resource => compute_resources(:one),
+      domain = FactoryBot.build(:domain)
+      cr_one = compute_resources(:one)
+      cr_one.update(:"#{taxonomy_name.pluralize}" => [taxonomy],
+                    :"#{opposite_taxonomy.pluralize}" => [])
+      FactoryBot.create(:host,
+                         :compute_resource => cr_one,
                          :domain           => domain,
                          :environment      => environments(:production),
                          :medium           => media(:one),
@@ -67,7 +80,7 @@ module TaxonomiesBaseTest
                          :subnet           => subnet,
                          :"#{taxonomy_name}" => taxonomy,
                          :"#{opposite_taxonomy}" => nil)
-      FactoryGirl.create(:os_default_template,
+      FactoryBot.create(:os_default_template,
                          :provisioning_template  => templates(:mystring2),
                          :operatingsystem  => operatingsystems(:centos5_3),
                          :template_kind    => TemplateKind.find_by_name('provision'))
@@ -110,7 +123,7 @@ module TaxonomiesBaseTest
 
     test 'it should return selected_ids array of selected values only (when types are not ignored)' do
       taxonomy = taxonomies(:"#{taxonomy_name}1")
-      #fixtures for taxable_taxonomies don't work, on has_many :through polymorphic
+      # fixtures for taxable_taxonomies don't work, on has_many :through polymorphic
       # run selected_ids method
       selected_ids = taxonomy.selected_ids
       # get results from taxable_taxonomies
@@ -138,7 +151,7 @@ module TaxonomiesBaseTest
       # match to manually generated taxable_taxonomies
       assert_equal selected_ids[:environment_ids], [environments(:production).id]
       assert_equal selected_ids[:hostgroup_ids], [hostgroups(:common).id]
-      assert_equal selected_ids[:subnet_ids], [subnets(:one).id]
+      assert_equal selected_ids[:subnet_ids].sort, [subnets(:one).id, subnets(:five).id].sort
       assert_equal selected_ids[:domain_ids], [domains(:mydomain).id, domains(:yourdomain).id]
       assert_equal selected_ids[:medium_ids], [media(:one).id]
       assert_equal selected_ids[:user_ids], [users(:one).id, users(:scoped).id]
@@ -187,7 +200,7 @@ module TaxonomiesBaseTest
 
     test "it should have its own class as auditable_type" do
       taxonomy = taxonomies(:"#{taxonomy_name}2")
-      assert taxonomy.update_attributes!(:name => 'newname')
+      assert taxonomy.update!(:name => 'newname')
       assert_equal taxonomy_name.classify, Audit.unscoped.last.auditable_type
     end
 
@@ -220,16 +233,16 @@ module TaxonomiesBaseTest
     end
 
     test ".my_taxonomies returns user's associated taxonomies and children" do
-      tax1 = FactoryGirl.create(:"#{taxonomy_name}")
-      tax2 = FactoryGirl.create(:"#{taxonomy_name}", :parent => tax1)
-      user = FactoryGirl.create(:user, :"#{taxonomy_name.pluralize}" => [tax1])
+      tax1 = FactoryBot.create(:"#{taxonomy_name}")
+      tax2 = FactoryBot.create(:"#{taxonomy_name}", :parent => tax1)
+      user = FactoryBot.build(:user, :"#{taxonomy_name.pluralize}" => [tax1])
       as_user(user) do
         assert_equal [tax1.id, tax2.id].sort,
           taxonomy_class.public_send(:"my_#{taxonomy_name.pluralize}").pluck(:id).sort
       end
     end
 
-    #taxonomy_class inheritance tests
+    # taxonomy_class inheritance tests
     test "inherited taxonomy should have correct path" do
       parent = taxonomies(:"#{taxonomy_name}1")
       taxonomy = taxonomy_class.create!(:name => "rack1", :parent_id => parent.id)
@@ -251,7 +264,7 @@ module TaxonomiesBaseTest
       # add subnet to taxonomy
       assert TaxableTaxonomy.create(:taxonomy_id => taxonomy.id, :taxable_id => subnets(:two).id, :taxable_type => "Subnet")
       # check that inherited_ids of taxonomy matches selected_ids of parent, except for subnet
-      taxonomy.selected_or_inherited_ids.each do |k,v|
+      taxonomy.selected_or_inherited_ids.each do |k, v|
         assert_equal v.uniq, parent.selected_ids[k].uniq unless k == 'subnet_ids'
         assert_equal v.uniq, ([subnets(:two).id] + parent.selected_ids[k].uniq) if k == 'subnet_ids'
       end
@@ -259,16 +272,16 @@ module TaxonomiesBaseTest
 
     test "used_and_selected_or_inherited_ids for inherited taxonomy" do
       parent = taxonomies(:"#{taxonomy_name}1")
-      subnet = FactoryGirl.create(:subnet_ipv4, :organizations => [taxonomies(:organization1)])
-      domain1 = FactoryGirl.create(:domain)
-      domain2 = FactoryGirl.create(:domain)
+      subnet = FactoryBot.create(:subnet_ipv4, :organizations => [taxonomies(:organization1)])
+      domain1 = FactoryBot.create(:domain)
+      domain2 = FactoryBot.create(:domain)
       parent.update_attribute(:domains, [domain1, domain2])
       parent.update_attribute(:subnets, [subnet])
       # we're no longer using the fixture dhcp/dns/tftp proxy to create the host, so remove them
-      parent.update_attribute(:smart_proxies,[smart_proxies(:puppetmaster),smart_proxies(:realm)])
+      parent.update_attribute(:smart_proxies, [smart_proxies(:puppetmaster), smart_proxies(:realm)])
 
       taxonomy = taxonomy_class.create :name => "rack1", :parent_id => parent.id
-      FactoryGirl.create(:host,
+      FactoryBot.build(:host,
                          :compute_resource => compute_resources(:one),
                          :domain           => domain1,
                          :environment      => environments(:production),
@@ -280,16 +293,16 @@ module TaxonomiesBaseTest
                          :puppet_proxy     => smart_proxies(:puppetmaster),
                          :realm            => realms(:myrealm),
                          :subnet           => subnet)
-      FactoryGirl.create(:host,
+      FactoryBot.build(:host,
                          :"#{taxonomy_name}" => parent,
-                         :domain           => domain2)
-      FactoryGirl.create(:os_default_template,
-                         :provisioning_template  => templates(:mystring2),
+                         :domain => domain2)
+      FactoryBot.build(:os_default_template,
+                         :provisioning_template => templates(:mystring2),
                          :operatingsystem  => operatingsystems(:centos5_3),
                          :template_kind    => TemplateKind.find_by_name('provision'))
 
       # check that inherited_ids of taxonomy matches selected_ids of parent
-      taxonomy.inherited_ids.each do |k,v|
+      taxonomy.inherited_ids.each do |k, v|
         assert_equal v.sort, parent.selected_ids[k].sort
       end
     end
@@ -298,24 +311,24 @@ module TaxonomiesBaseTest
       parent = taxonomies(:"#{taxonomy_name}1")
       taxonomy = taxonomy_class.create :name => "rack1", :parent_id => parent.id
       # no hosts were assigned to taxonomy, so no missing ids need to be selected
-      taxonomy.need_to_be_selected_ids.each do |k,v|
+      taxonomy.need_to_be_selected_ids.each do |k, v|
         assert v.empty?
       end
     end
 
     test "multiple inheritance" do
       parent1 = taxonomies(:"#{taxonomy_name}1")
-      assert_equal [subnets(:one).id], parent1.selected_ids["subnet_ids"]
+      assert_equal [subnets(:one).id, subnets(:five).id].sort, parent1.selected_ids["subnet_ids"].sort
 
       # inherit from parent 1
       parent2 = taxonomy_class.create :name => "floor1", :parent_id => parent1.id
       assert TaxableTaxonomy.create(:taxonomy_id => parent2.id, :taxable_id => subnets(:two).id, :taxable_type => "Subnet")
-      assert_equal [subnets(:one).id, subnets(:two).id].sort, parent2.selected_or_inherited_ids["subnet_ids"].sort
+      assert_equal [subnets(:one).id, subnets(:five).id, subnets(:two).id].sort, parent2.selected_or_inherited_ids["subnet_ids"].sort
 
       # inherit from parent 2
       taxonomy = taxonomy_class.create :name => "rack1", :parent_id => parent2.id
       assert TaxableTaxonomy.create(:taxonomy_id => parent2.id, :taxable_id => subnets(:three).id, :taxable_type => "Subnet")
-      assert_equal [subnets(:one).id, subnets(:two).id, subnets(:three).id].sort, taxonomy.selected_or_inherited_ids["subnet_ids"].sort
+      assert_equal [subnets(:one).id, subnets(:five).id, subnets(:two).id, subnets(:three).id].sort, taxonomy.selected_or_inherited_ids["subnet_ids"].sort
     end
 
     test "parameter inheritence with no new parameters on child taxonomy" do
@@ -380,7 +393,7 @@ module TaxonomiesBaseTest
     end
 
     test "taxonomy name can't be too big to create lookup value matcher over 255 characters" do
-      parent = FactoryGirl.create(:"#{taxonomy_name}")
+      parent = FactoryBot.create(:"#{taxonomy_name}")
       min_lookupvalue_length = "#{taxonomy_name}=".length + parent.title.length + 1
       taxonomy = taxonomy_class.new :parent => parent, :name => 'a' * (256 - min_lookupvalue_length)
       refute_valid taxonomy
@@ -389,14 +402,14 @@ module TaxonomiesBaseTest
     end
 
     test "taxonomy name can be up to 255 characters" do
-      parent = FactoryGirl.create(:"#{taxonomy_name}")
+      parent = FactoryBot.create(:"#{taxonomy_name}")
       min_lookupvalue_length = "#{taxonomy_name}=".length + parent.title.length + 1
       taxonomy = taxonomy_class.new :parent => parent, :name => 'a' * (255 - min_lookupvalue_length)
       assert_valid taxonomy
     end
 
     test "taxonomy should not save when matcher is exactly 256 characters" do
-      parent = FactoryGirl.create(:"#{taxonomy_name}", :name => 'a' * (255 - taxonomy_name.length - 2))
+      parent = FactoryBot.create(:"#{taxonomy_name}", :name => 'a' * (255 - taxonomy_name.length - 2))
       taxonomy = taxonomy_class.new :parent => parent, :name => 'b'
       refute_valid taxonomy
       assert_equal _("is too long (maximum is 0 characters)"), taxonomy.errors[:name].first

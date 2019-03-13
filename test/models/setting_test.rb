@@ -16,6 +16,21 @@ class SettingTest < ActiveSupport::TestCase
     assert_nil Setting["no_such_thing"]
   end
 
+  setup do
+    Setting::NOT_STRIPPED << 'not_stripped_test'
+  end
+
+  teardown do
+    Setting::NOT_STRIPPED.delete 'not_stripped_test'
+  end
+
+  test 'should not strip setting value when parsing if we do not want to' do
+    setting = Setting.create(:name => 'not_stripped_test', :value => 'whatever', :setting_type => 'string')
+    trailing_space_val = 'Local '
+    setting.parse_string_value(trailing_space_val)
+    assert_equal setting.value, trailing_space_val
+  end
+
   test "encrypted value is saved encrypted when created" do
     setting = Setting.create(:name => "foo", :value => 5, :default => 5, :description => "test foo", :encrypted => true)
     setting.expects(:encryption_key).at_least_once.returns('25d224dd383e92a7e0c82b8bf7c985e815f34cf5')
@@ -149,7 +164,7 @@ class SettingTest < ActiveSupport::TestCase
   end
 
   def test_set_method_prepares_attrs_for_creation
-    options = Setting.set "test_attr", "some_description", "default_value", "full_name","my_value"
+    options = Setting.set "test_attr", "some_description", "default_value", "full_name", "my_value"
     assert_equal "test_attr", options[:name]
     assert_equal "some_description", options[:description]
     assert_equal "default_value", options[:default]
@@ -189,11 +204,12 @@ class SettingTest < ActiveSupport::TestCase
     setting_name = "foo_#{rand(1000000)}"
     Setting.create!(:name => setting_name, :value => "bar", :default => "default", :description => "foo")
 
-    SETTINGS.stubs(:key?).with(setting_name.to_sym).returns(true)
-    SETTINGS.stubs(:[]).with(setting_name.to_sym).returns("no-bar")
+    SETTINGS[setting_name.to_sym] = "no-bar"
 
     persisted = Setting.create!(:name => setting_name, :description => "foo", :default => "default")
     assert_equal "no-bar", persisted.value
+  ensure
+    SETTINGS.delete(setting_name.to_sym)
   end
 
   def test_first_or_create_works
@@ -206,7 +222,7 @@ class SettingTest < ActiveSupport::TestCase
 
   # tests for saving settings attributes
   def test_settings_should_save_arrays
-    check_properties_saved_and_loaded_ok :name => "foo", :value => [1,2,3,'b'], :default => ['b',"b"], :description => "test foo"
+    check_properties_saved_and_loaded_ok :name => "foo", :value => [1, 2, 3, 'b'], :default => ['b', "b"], :description => "test foo"
   end
 
   def test_settings_should_save_hashes
@@ -286,14 +302,14 @@ class SettingTest < ActiveSupport::TestCase
     check_zero_value_not_allowed_for 'puppet_interval'
   end
 
-  test "trusted_puppetmaster_hosts can be empty array" do
-    check_empty_array_allowed_for "trusted_puppetmaster_hosts"
+  test "trusted_hosts can be empty array" do
+    check_empty_array_allowed_for "trusted_hosts"
   end
 
-  test "trusted_puppetmaster_hosts must have comma separated values" do
-    attrs = { :name => "trusted_puppetmaster_hosts", :default => [], :description => "desc" }
+  test "trusted_hosts must have comma separated values" do
+    attrs = { :name => "trusted_hosts", :default => [], :description => "desc" }
     assert Setting.where(:name => attrs[:name]).first || Setting.create(attrs)
-    setting = Setting.find_by_name("trusted_puppetmaster_hosts")
+    setting = Setting.find_by_name("trusted_hosts")
     setting.value = ["localhost", "remotehost"]
     assert setting.save
     setting.value = ["localhost remotehost"]
@@ -305,7 +321,7 @@ class SettingTest < ActiveSupport::TestCase
     attrs = { :name => "foreman_url", :default => "http://foo.com" }
     assert Setting.where(:name => attrs[:name]).first || Setting.create(attrs)
     setting = Setting.find_by_name("foreman_url")
-    setting.value="##"
+    setting.value = "##"
     assert !setting.save
     assert_equal "URL must be valid and schema must be one of http and https", setting.errors[:value].first
   end
@@ -331,7 +347,7 @@ class SettingTest < ActiveSupport::TestCase
     attrs = { :name => "unattended_url", :default => "http://foo.com" }
     assert Setting.where(:name => attrs[:name]).first || Setting.create(attrs)
     setting = Setting.find_by_name("unattended_url")
-    setting.value="##"
+    setting.value = "##"
     assert !setting.save
     assert_equal "URL must be valid and schema must be one of http and https", setting.errors[:value].first
   end
@@ -449,9 +465,7 @@ class SettingTest < ActiveSupport::TestCase
   end
 
   test "create succeeds when cache is non-functional" do
-    # for unknown reasons this fails in the CI environment, but passes locally
-    skip if ActiveRecord::Base.connection_config[:adapter].eql?("postgresql")
-    Setting.cache.expects(:delete).with('test_broken_cache').returns(false)
+    Setting.cache.expects(:delete).with(Setting.cache_key('test_broken_cache')).returns(false)
     assert_valid Setting.create!(:name => 'test_broken_cache', :description => 'foo', :default => 'default')
   end
 
@@ -555,21 +569,22 @@ class SettingTest < ActiveSupport::TestCase
   end
 
   def check_value_returns_from_cache_with(options = {})
-    name = options[:name].to_s
+    name = options[:name]
+    cache_key = Setting.cache_key(name)
 
-    #cache must be cleared on create
-    Rails.cache.write(name, "old value")
+    # cache must be cleared on create
+    Rails.cache.write(cache_key, "old value")
     assert Setting.create(options)
-    assert_nil Rails.cache.read(name)
+    assert_nil Rails.cache.read(cache_key)
 
-    #first time getter method, write the cache
-    Rails.cache.delete(name)
+    # first time getter method, write the cache
+    Rails.cache.delete(cache_key)
     assert_equal options[:value], Setting[name]
-    assert_equal options[:value], Rails.cache.read(name)
+    assert_equal options[:value], Rails.cache.read(cache_key)
 
-    #setter method deletes the cache
+    # setter method deletes the cache
     Setting[name] = options[:value]
-    assert_nil Rails.cache.read(name)
+    assert_nil Rails.cache.read(cache_key)
   end
 
   test 'bmc_credentials_accessible may not be disabled with safemode_render disabled' do
@@ -599,5 +614,66 @@ class SettingTest < ActiveSupport::TestCase
     sorted_list = Setting.where.not(:category => sticky_setting).stick_general_first
     refute_empty sorted_list
     assert sorted_list.keys.exclude?(sticky_setting)
+  end
+
+  test 'full_name_with_default should include default value' do
+    setting = FactoryBot.build_stubbed(:setting, :name => 'foo', :value => 'baz', :default => 'boo', :description => 'test foo', :full_name => 'Foo Name')
+    assert_equal('Foo Name (Default: boo)', setting.full_name_with_default)
+  end
+
+  test 'full_name_with_default without default value' do
+    setting = FactoryBot.build_stubbed(:setting, :name => 'foo', :default => '', :description => 'test foo', :full_name => 'Foo Name')
+    assert_equal('Foo Name (Default: Not set)', setting.full_name_with_default)
+  end
+
+  test 'has_default? returns false on empty array/string/hash' do
+    ['', [], {}].each do |default_value|
+      setting = FactoryBot.build_stubbed(:setting, :settings_type => default_value.class.to_s.downcase, :name => 'foo', :default => default_value)
+      assert !setting.has_default?
+    end
+
+    ['h', [''], {:one => 1}].each do |default_value|
+      setting = FactoryBot.build_stubbed(:setting, :settings_type => default_value.class.to_s.downcase, :name => 'foo', :default => default_value)
+      assert setting.has_default?
+    end
+  end
+
+  test 'has_default? returns true on setting_type boolean/integer' do
+    [0, 1, -1].each do |default_value|
+      setting = FactoryBot.build_stubbed(:setting, :settings_type => default_value.class.to_s.downcase, :name => 'foo', :default => default_value)
+      assert setting.has_default?
+    end
+    [false, true].each do |default_value|
+      setting = FactoryBot.build_stubbed(:setting, :settings_type => "boolean", :name => 'foo', :default => default_value)
+      assert setting.has_default?
+    end
+  end
+
+  test 'has_default? for other settings_type' do
+    ['', [], {}].each do |default_value|
+      setting = FactoryBot.build_stubbed(:setting, :settings_type => nil, :name => 'foo', :default => default_value)
+      assert !setting.has_default?
+    end
+
+    ['h', [''], {:one => 1}].each do |default_value|
+      setting = FactoryBot.build_stubbed(:setting, :settings_type => 'somethingelse', :name => 'foo', :default => default_value)
+      assert setting.has_default?
+    end
+  end
+
+  test 'orders settings alphabetically' do
+    FactoryBot.create(:setting, :name => 'b_foo', :default => 'whatever', :value => 'whatever',  :full_name => 'B Foo Name')
+    FactoryBot.create(:setting, :name => 'a_foo', :default => 'whatever', :value => 'whatever',  :full_name => 'A Foo Name')
+    FactoryBot.create(:setting, :name => 'c_foo', :default => 'whatever', :value => 'whatever',  :full_name => 'C Foo Name')
+    settings = Setting.live_descendants.map(&:full_name).compact
+    assert_equal settings.sort, settings
+  end
+
+  test "should update login page footer text with multiple valid long values" do
+    setting = Setting.find_by_name("login_text")
+    RFauxFactory.gen_strings(1000).values.each do |value|
+      setting.value = value
+      assert setting.valid?, "Can't update discovery_prefix setting with valid value #{value}"
+    end
   end
 end

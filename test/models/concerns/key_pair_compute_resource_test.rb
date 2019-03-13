@@ -5,7 +5,11 @@ class DummyComputeResource < ComputeResource
   include Mocha::API
 
   def client
-    @client ||= mock('client')
+    @client ||= ::Fog::Compute.new(
+      provider: :aws,
+      aws_access_key_id: 'foo',
+      aws_secret_access_key: 'bar'
+    )
   end
 end
 
@@ -29,22 +33,20 @@ class KeyPairComputeResourceTest < ActiveSupport::TestCase
     end
 
     cr = DummyComputeResource.new
-    key_pair = FactoryGirl.build(:key_pair)
+    key_pair = FactoryBot.build_stubbed(:key_pair)
     cr.key_pair = key_pair
     DummyComputeResource.any_instance.stubs(:key_pairs).returns(@key_pairs)
     assert_kind_of(ComputeResourceKeyPair, cr.get_compute_key_pairs.first)
   end
 
   test 'should remove the key pair on compute resource deletion' do
-    cr = DummyComputeResource.new
-    key_pair = FactoryGirl.build(:key_pair)
-    cr.key_pair = key_pair
-    mock_key_pairs = mock('mock_key_pairs')
-    fog_key_pair = mock('fog_key_pair')
-    cr.send(:client).expects(:key_pairs).returns(mock_key_pairs)
-    mock_key_pairs.expects(:get).with(key_pair.name).returns(fog_key_pair)
-    key_pair.expects(:destroy).once
-    fog_key_pair.expects(:destroy).once
+    Fog.mock!
+    key_pair = FactoryBot.create(:key_pair)
+    cr = DummyComputeResource.create(name: Foreman.uuid, provider: 'EC2')
+    # we must use the update key in order to make the test work, or we shell
+    # have an exception that the data was unable to be destroyed
+    cr.update_attribute(:key_pair, key_pair)
+    Fog.unmock!
     assert cr.destroy!
   end
 end

@@ -1,7 +1,9 @@
-FactoryGirl.define do
+FactoryBot.define do
   factory :medium do
     sequence(:name) {|n| "medium#{n}" }
     sequence(:path) {|n| "http://www.example.com/path#{n}" }
+    organizations { [Organization.find_by_name('Organization 1')] }
+    locations { [Location.find_by_name('Location 1')] }
 
     trait :coreos do
       sequence(:name) { |n| "CoreOS Mirror #{n}"}

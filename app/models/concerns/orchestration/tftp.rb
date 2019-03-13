@@ -1,5 +1,6 @@
 module Orchestration::TFTP
   extend ActiveSupport::Concern
+  include Orchestration::Common
 
   included do
     after_validation :validate_tftp, :unless => :skip_orchestration?
@@ -14,7 +15,7 @@ module Orchestration::TFTP
   def tftp_ready?
     # host.managed? and managed? should always come first so that orchestration doesn't
     # even get tested for such objects
-    (host.nil? || host.managed?) && managed && provision? && (host && host.operatingsystem && host.pxe_loader.present?) && pxe_build? && SETTINGS[:unattended]
+    (host.nil? || host&.managed?) && managed && provision? && (host&.operatingsystem && host.pxe_loader.present?) && !image_build? && SETTINGS[:unattended]
   end
 
   def tftp?
@@ -39,7 +40,7 @@ module Orchestration::TFTP
       return true
     end
 
-    results = host.operatingsystem.template_kinds.map do |kind|
+    results = host.operatingsystem.template_kinds_for_tftp.map do |kind|
       rebuild_tftp_kind_safe(kind)
     end
     results.all?
@@ -53,22 +54,6 @@ module Orchestration::TFTP
   end
 
   def generate_pxe_template(kind)
-    # this is the only place we generate a template not via a web request
-    # therefore some workaround is required to "render" the template.
-    @kernel = host.operatingsystem.kernel(host.arch)
-    @initrd = host.operatingsystem.initrd(host.arch)
-    if host.operatingsystem.respond_to?(:mediumpath)
-      @mediapath = host.operatingsystem.mediumpath(host)
-    end
-
-    # Xen requires additional boot files.
-    if host.operatingsystem.respond_to?(:xen)
-      @xen = host.operatingsystem.xen(host.arch)
-    end
-
-    # work around for ensuring that people can use @host as well, as tftp templates were usually confusing.
-    @host = self.host
-
     return build_pxe_render(kind) if build?
     default_pxe_render(kind)
   end
@@ -78,15 +63,18 @@ module Orchestration::TFTP
   def build_pxe_render(kind)
     template = host.provisioning_template({:kind => kind})
     return unless template.present?
-    unattended_render template
+    host.render_template(template: template)
   rescue => e
     failure _("Unable to render %{kind} template '%{name}': %{e}") % { :kind => kind, :name => template.try(:name), :e => e }, e
   end
 
   def default_pxe_render(kind)
-    template = ProvisioningTemplate.find_by_name(local_boot_template_name kind)
+    template_name = host.local_boot_template_name(kind)
+    # Safely return in case there's no template configured for the specified kind
+    return unless template_name.present?
+    template = ProvisioningTemplate.find_by_name(template_name)
     raise Foreman::Exception.new(N_("Template '%s' was not found"), template_name) unless template
-    unattended_render template, template_name
+    host.render_template(template: template)
   rescue => e
     failure _("Unable to render '%{name}' template: %{e}") % { :name => template_name, :e => e }, e
   end
@@ -122,8 +110,9 @@ module Orchestration::TFTP
   def setTFTPBootFiles
     logger.info "Fetching required TFTP boot files for #{host.name}"
     valid = []
-    host.operatingsystem.pxe_files(host.medium, host.architecture, host).each do |bootfile_info|
-      for prefix, path in bootfile_info do
+
+    host.operatingsystem.pxe_files(host.medium_provider).each do |bootfile_info|
+      bootfile_info.each do |prefix, path|
         valid << each_unique_feasible_tftp_proxy do |proxy|
           proxy.fetch_boot_file(:prefix => prefix.to_s, :path => path)
         end
@@ -133,7 +122,7 @@ module Orchestration::TFTP
     valid.all?
   end
 
-  #empty method for rollbacks
+  # empty method for rollbacks
   def delTFTPBootFiles
   end
 
@@ -150,7 +139,7 @@ module Orchestration::TFTP
   end
 
   def queue_tftp
-    return unless (tftp? || tftp6?) && no_errors
+    return log_orchestration_errors unless (tftp? || tftp6?) && no_errors
     # Jumpstart builds require only minimal tftp services. They do require a tftp object to query for the boot_server.
     return true if host.jumpstart?
     new_record? ? queue_tftp_create : queue_tftp_update
@@ -207,10 +196,5 @@ module Orchestration::TFTP
       yield(proxy)
     end
     results.all?
-  end
-
-  def local_boot_template_name(kind)
-    key = "local_boot_#{kind}"
-    host.host_params[key] || Setting[key]
   end
 end

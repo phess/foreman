@@ -1,5 +1,25 @@
 class UsergroupMember < ApplicationRecord
+  # the belongs to would apply default scope limiting the search by taxonomies but we need to delete
+  # all members, regardless of their taxonomies
+  #
+  # we can't use custom scope definition in belongs_to because it's polymorphic, unscope(:where) would reset
+  # the member_type condition so we need to override how we search for members
+  module OverrideMemberAssociation
+    def member
+      case member_type
+        when 'User'
+          User.unscoped { super }
+        when 'Usergroup'
+          Usergroup.unscoped { super }
+        else
+          raise ArgumentError, "Unknown member type #{member_type}"
+      end
+    end
+  end
+
   belongs_to :member, :polymorphic => true
+  prepend OverrideMemberAssociation
+
   belongs_to :usergroup
 
   before_validation :ensure_no_cycle
@@ -66,7 +86,9 @@ class UsergroupMember < ApplicationRecord
   end
 
   def recache_memberships
-    find_all_affected_memberships.each(&:save!)
+    memberships = find_all_affected_memberships
+    memberships = memberships.without(self) if self.destroyed?
+    memberships.each(&:save!)
   end
 
   def drop_role_cache(users, user_roles)
@@ -114,7 +136,7 @@ class UsergroupMember < ApplicationRecord
   end
 
   def find_all_user_roles_for(usergroup)
-    (UserRole.where(:owner => usergroup)+ usergroup.parents.map { |g| find_all_user_roles_for(g) }).flatten
+    (UserRole.where(:owner => usergroup) + usergroup.parents.map { |g| find_all_user_roles_for(g) }).flatten
   end
 
   def find_all_usergroups

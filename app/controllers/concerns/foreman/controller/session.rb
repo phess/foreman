@@ -33,11 +33,11 @@ module Foreman::Controller::Session
     logger.info "Session for #{User.current} is expired."
     backup_session_content { reset_session }
     if api_request?
-      render :plain => '', :status => 401
+      render :plain => '', :status => :unauthorized
     else
       sso = get_sso_method
       if sso.nil? || !sso.support_expiration?
-        warning _("Your session has expired, please login again")
+        inline_warning _("Your session has expired, please login again")
         redirect_to main_app.login_users_path
       else
         redirect_to sso.expiration_url

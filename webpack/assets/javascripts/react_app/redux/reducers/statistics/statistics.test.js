@@ -1,44 +1,43 @@
-import reducer from './index';
 import * as types from '../../consts';
+
 import {
   initialState,
   request,
   stateBeforeResponse,
   response,
-  stateAfterSuccess,
-  stateAfterFailure,
-  error
+  error,
 } from './statistics.fixtures';
 
+import reducer from './index';
+import { testReducerSnapshotWithFixtures } from '../../../common/testHelpers';
+
 describe('statistics reducer', () => {
-  it('should return the initial state', () => {
-    expect(reducer(undefined, {})).toEqual(initialState);
-  });
-
-  it('should handle STATISTICS_DATA_REQUEST', () => {
-    expect(
-      reducer(initialState, {
+  const fixtures = {
+    'should return the initial state': {
+      prev: undefined,
+      action: {},
+    },
+    'should handle STATISTICS_DATA_REQUEST': {
+      prev: initialState,
+      action: {
         type: types.STATISTICS_DATA_REQUEST,
-        payload: request
-      })
-    ).toEqual(stateBeforeResponse);
-  });
-
-  it('should handle STATISTICS_DATA_SUCCESS', () => {
-    expect(
-      reducer(stateBeforeResponse, {
+        payload: request,
+      },
+    },
+    'should handle STATISTICS_DATA_SUCCESS': {
+      prev: stateBeforeResponse,
+      action: {
         type: types.STATISTICS_DATA_SUCCESS,
-        payload: response
-      })
-    ).toEqual(stateAfterSuccess);
-  });
-
-  it('should handle STATISTICS_DATA_FAILURE', () => {
-    expect(
-      reducer(stateBeforeResponse, {
+        payload: response,
+      },
+    },
+    'should handle STATISTICS_DATA_FAILURE': {
+      prev: stateBeforeResponse,
+      action: {
         type: types.STATISTICS_DATA_FAILURE,
-        payload: { error, id: request.id}
-      })
-    ).toEqual(stateAfterFailure);
-  });
+        payload: { error, item: request },
+      },
+    },
+  };
+  testReducerSnapshotWithFixtures(reducer, fixtures);
 });

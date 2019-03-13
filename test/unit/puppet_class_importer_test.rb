@@ -2,7 +2,7 @@ require 'test_helper'
 
 class PuppetClassImporterTest < ActiveSupport::TestCase
   def setup
-    ProxyAPI::Puppet.any_instance.stubs(:environments).returns(["foreman-testing","foreman-testing-1"])
+    ProxyAPI::Puppet.any_instance.stubs(:environments).returns(["foreman-testing", "foreman-testing-1"])
     ProxyAPI::Puppet.any_instance.stubs(:classes).returns(mocked_classes)
     User.current = User.find_by :login => "foreman_admin"
   end
@@ -169,8 +169,8 @@ class PuppetClassImporterTest < ActiveSupport::TestCase
 
   test "should obey config/ignored_environments.yml" do
     as_admin do
-      hostgroups(:inherited).destroy #needs to be deleted first, since it has ancestry
-      Hostgroup.destroy_all #to satisfy FK contraints when deleting Environments
+      hostgroups(:inherited).destroy # needs to be deleted first, since it has ancestry
+      Hostgroup.destroy_all # to satisfy FK contraints when deleting Environments
       Environment.destroy_all
     end
 
@@ -180,18 +180,29 @@ class PuppetClassImporterTest < ActiveSupport::TestCase
   end
 
   test "should save parameter when importing with a different default_value" do
-    env = FactoryGirl.create(:environment)
-    pc = FactoryGirl.create(:puppetclass, :environments => [env])
-    lk = FactoryGirl.create(:puppetclass_lookup_key, :as_smart_class_param, :default_value => 'first', :puppetclass => pc)
+    env = FactoryBot.build(:environment)
+    pc = FactoryBot.build(:puppetclass, :environments => [env])
+    lk = FactoryBot.build(:puppetclass_lookup_key, :as_smart_class_param, :default_value => 'first', :puppetclass => pc)
 
     updated = get_an_instance.send(:update_classes_in_foreman, env.name,
                                   {pc.name => {'updated' => [lk.key]}})
     assert_not_nil updated
   end
 
+  test "should not override parameter when default_value is empty" do
+    env = FactoryBot.create(:environment)
+    pc = FactoryBot.create(:puppetclass, :environments => [env])
+
+    get_an_instance.send(:update_classes_in_foreman, env.name,
+                        {pc.name => {'new' => {'test_nil_param' => nil}}})
+    lk = PuppetclassLookupKey.where(:key => 'test_nil_param').first
+    refute lk.override
+    refute lk.required
+  end
+
   test "should change default_value when importing from 2 environments" do
-    envs = FactoryGirl.create_list(:environment, 2)
-    pc = FactoryGirl.create(:puppetclass, :environments => envs)
+    envs = FactoryBot.create_list(:environment, 2)
+    pc = FactoryBot.create(:puppetclass, :environments => envs)
 
     get_an_instance.send(:update_classes_in_foreman, envs.first.name,
                          {pc.name => {'new' => {'2_env_param' => 'first'}}})
@@ -204,12 +215,12 @@ class PuppetClassImporterTest < ActiveSupport::TestCase
 
   context '#update_classes_in_foreman removes parameters' do
     setup do
-      @envs = FactoryGirl.create_list(:environment, 2)
-      @pc = FactoryGirl.create(:puppetclass, :environments => @envs)
+      @envs = FactoryBot.create_list(:environment, 2)
+      @pc = FactoryBot.create(:puppetclass, :environments => @envs)
     end
 
     test 'from one environment' do
-      lks = FactoryGirl.create_list(:puppetclass_lookup_key, 2, :as_smart_class_param, :puppetclass => @pc)
+      lks = FactoryBot.create_list(:puppetclass_lookup_key, 2, :as_smart_class_param, :puppetclass => @pc)
       get_an_instance.send(:update_classes_in_foreman, @envs.first.name,
                            {@pc.name => {'obsolete' => [lks.first.key]}})
       assert_equal [@envs.last], lks.first.environments
@@ -217,7 +228,7 @@ class PuppetClassImporterTest < ActiveSupport::TestCase
     end
 
     test 'when overridden' do
-      lks = FactoryGirl.create_list(:puppetclass_lookup_key, 2, :as_smart_class_param, :with_override, :puppetclass => @pc)
+      lks = FactoryBot.create_list(:puppetclass_lookup_key, 2, :as_smart_class_param, :with_override, :puppetclass => @pc)
       get_an_instance.send(:update_classes_in_foreman, @envs.first.name,
                            {@pc.name => {'obsolete' => [lks.first.key]}})
       assert_equal [@envs.last], lks.first.environments
@@ -225,7 +236,7 @@ class PuppetClassImporterTest < ActiveSupport::TestCase
     end
 
     test 'deletes the key from all environments' do
-      lks = FactoryGirl.create_list(:puppetclass_lookup_key, 2, :as_smart_class_param, :with_override, :puppetclass => @pc)
+      lks = FactoryBot.create_list(:puppetclass_lookup_key, 2, :as_smart_class_param, :with_override, :puppetclass => @pc)
       lval = lks.first.lookup_values.first
       get_an_instance.send(:update_classes_in_foreman, @envs.first.name,
                            {@pc.name => {'obsolete' => [lks.first.key]}})
@@ -238,17 +249,17 @@ class PuppetClassImporterTest < ActiveSupport::TestCase
   end
 
   test "should detect correct environments for import" do
-    org_a = FactoryGirl.create(:organization, :name => "OrgA")
-    loc_a = FactoryGirl.create(:location, :name => "LocA")
-    org_b = FactoryGirl.create(:organization, :name => "OrgB")
-    loc_b = FactoryGirl.create(:location, :name => "LocB")
+    org_a = FactoryBot.build(:organization, :name => "OrgA")
+    loc_a = FactoryBot.build(:location, :name => "LocA")
+    org_b = FactoryBot.build(:organization, :name => "OrgB")
+    loc_b = FactoryBot.build(:location, :name => "LocB")
     b_role = roles(:manager).clone :name => 'b_role'
     b_role.add_permissions! [:destroy_external_parameters, :edit_external_parameters, :create_external_parameters, :view_external_parameters]
-    a_user = FactoryGirl.create(:user, :organizations => [org_a], :locations => [loc_a], :roles => [roles(:manager)], :login => 'a_user')
-    b_user = FactoryGirl.create(:user, :organizations => [org_b], :locations => [loc_b], :roles => [b_role], :login => 'b_user')
-    proxy = FactoryGirl.create(:puppet_smart_proxy, :organizations => [org_a, org_b], :locations => [loc_a, loc_b])
+    a_user = FactoryBot.create(:user, :organizations => [org_a], :locations => [loc_a], :roles => [roles(:manager)], :login => 'a_user')
+    b_user = FactoryBot.create(:user, :organizations => [org_b], :locations => [loc_b], :roles => [b_role], :login => 'b_user')
+    proxy = FactoryBot.build(:puppet_smart_proxy, :organizations => [org_a, org_b], :locations => [loc_a, loc_b])
     importer = PuppetClassImporter.new(:url => proxy.url)
-    FactoryGirl.create(:environment, :name => "env_a", :organizations => [org_a], :locations => [loc_a])
+    FactoryBot.create(:environment, :name => "env_a", :organizations => [org_a], :locations => [loc_a])
     ProxyAPI::Puppet.any_instance.stubs(:environments).returns(['env_a', 'b_env_new'])
     User.current = b_user
     changes = importer.changes

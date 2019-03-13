@@ -1,5 +1,5 @@
 function turn_textarea_switch() {
-  $('.editor-container .ace_content').toggleClass('masked-input');
+  $('#common_parameter_value').toggleClass('masked-input');
 }
 
 function hidden_value_control(){
@@ -21,5 +21,5 @@ function replace_value_control(link) {
 // normal page load trigger
 $(document).ready(hidden_value_control);
 
-// two-pane ajax trigger
+// ajax trigger
 $(document).ajaxComplete(hidden_value_control);

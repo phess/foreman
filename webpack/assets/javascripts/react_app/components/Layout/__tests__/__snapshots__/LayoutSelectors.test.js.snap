@@ -1,0 +1,197 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Layout selectors should return Layout 1`] = `
+Object {
+  "activeMenu": "Hosts",
+  "currentLocation": Object {
+    "title": "loc1",
+  },
+  "currentOrganization": Object {
+    "title": "org1",
+  },
+  "isLoading": true,
+  "items": Array [
+    Object {
+      "active": false,
+      "children": Array [
+        Object {
+          "name": "Dashboard",
+          "type": "item",
+          "url": "/",
+        },
+        Object {
+          "name": "Facts",
+          "type": "item",
+          "url": "/fact_values",
+        },
+      ],
+      "icon": "fa fa-tachometer",
+      "name": "Monitor",
+      "type": "sub_menu",
+    },
+    Object {
+      "active": false,
+      "children": Array [
+        Object {
+          "name": "All Hosts",
+          "type": "item",
+          "url": "/hosts/new",
+        },
+        Object {
+          "name": "Architectures",
+          "type": "item",
+          "url": "/architectures",
+        },
+      ],
+      "icon": "fa fa-server",
+      "name": "Hosts",
+      "type": "sub_menu",
+    },
+    Object {
+      "active": false,
+      "children": Array [
+        Object {
+          "name": "Environments",
+          "type": "item",
+          "url": "/environments",
+        },
+        Object {
+          "name": "Architectures",
+          "type": "item",
+          "url": "/architectures",
+        },
+      ],
+      "icon": "fa fa-wrench",
+      "name": "User",
+      "type": "sub_menu",
+    },
+    Object {
+      "active": false,
+      "children": Array [
+        Object {
+          "name": "Domains",
+          "type": "item",
+          "url": "/domains",
+        },
+        Object {
+          "name": "Realms",
+          "type": "item",
+          "url": "/realms",
+        },
+      ],
+      "icon": "pficon pficon-network",
+      "name": "Infrastructure",
+      "type": "sub_menu",
+    },
+  ],
+}
+`;
+
+exports[`Layout selectors should return PF-React Compatible items 1`] = `
+Array [
+  Object {
+    "className": undefined,
+    "iconClass": "fa fa-tachometer",
+    "initialActive": false,
+    "subItems": Array [
+      Object {
+        "className": "",
+        "href": "/",
+        "isDivider": false,
+        "onClick": null,
+        "preventHref": false,
+        "title": "Dashboard",
+      },
+      Object {
+        "className": "",
+        "href": "/fact_values",
+        "isDivider": false,
+        "onClick": null,
+        "preventHref": false,
+        "title": "Facts",
+      },
+    ],
+    "title": "Monitor",
+  },
+  Object {
+    "className": undefined,
+    "iconClass": "fa fa-server",
+    "initialActive": false,
+    "subItems": Array [
+      Object {
+        "className": "",
+        "href": "/hosts/new",
+        "isDivider": false,
+        "onClick": null,
+        "preventHref": false,
+        "title": "All Hosts",
+      },
+      Object {
+        "className": "",
+        "href": "/architectures",
+        "isDivider": false,
+        "onClick": null,
+        "preventHref": false,
+        "title": "Architectures",
+      },
+    ],
+    "title": "Hosts",
+  },
+  Object {
+    "className": undefined,
+    "iconClass": "fa fa-wrench",
+    "initialActive": false,
+    "subItems": Array [
+      Object {
+        "className": "",
+        "href": "/environments",
+        "isDivider": false,
+        "onClick": null,
+        "preventHref": false,
+        "title": "Environments",
+      },
+      Object {
+        "className": "",
+        "href": "/architectures",
+        "isDivider": false,
+        "onClick": null,
+        "preventHref": false,
+        "title": "Architectures",
+      },
+    ],
+    "title": "User",
+  },
+  Object {
+    "className": undefined,
+    "iconClass": "pficon pficon-network",
+    "initialActive": false,
+    "subItems": Array [
+      Object {
+        "className": "",
+        "href": "/domains",
+        "isDivider": false,
+        "onClick": null,
+        "preventHref": false,
+        "title": "Domains",
+      },
+      Object {
+        "className": "",
+        "href": "/realms",
+        "isDivider": false,
+        "onClick": null,
+        "preventHref": false,
+        "title": "Realms",
+      },
+    ],
+    "title": "Infrastructure",
+  },
+]
+`;
+
+exports[`Layout selectors should return empty array of items 1`] = `Array []`;
+
+exports[`Layout selectors should return isLoading from selector 1`] = `true`;
+
+exports[`Layout selectors should return location from selector 1`] = `"loc1"`;
+
+exports[`Layout selectors should return organization from selector 1`] = `"org1"`;

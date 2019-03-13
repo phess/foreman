@@ -6,15 +6,8 @@
 # Please ensure that all templates are submitted to community-templates, then they will be synced in.
 
 # define all helpers here
-
 def format_errors(model = nil)
-  return '(nil found)' if model.nil?
-  model.errors.full_messages.join(';')
-end
-
-def audit_modified?(type, name, attributes = {})
-  Foreman::Deprecation.deprecation_warning('1.17', "This method will be removed, use SeedHelper.audit_modified? instead.")
-  SeedHelper.audit_modified? type, name, attributes
+  SeedHelper.format_errors(model)
 end
 
 # now we load all seed files

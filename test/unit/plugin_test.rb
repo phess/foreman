@@ -20,7 +20,8 @@ require 'pagelets_test_helper'
 
 module Awesome
   module Provider; class MyAwesome < ::ComputeResource; end; end
-  def self.register_smart_proxy(name, options = {}); end
+  def self.register_smart_proxy(name, options = {})
+  end
 end
 module Awesome; class FakeFacet; end; end
 
@@ -42,15 +43,8 @@ class PluginTest < ActiveSupport::TestCase
     end
   end
 
-  def setup
-    @klass = Foreman::Plugin
-    # In case some real plugins are installed
-    @klass.clear
-  end
-
-  def teardown
-    @klass.clear
-  end
+  setup :clear_plugins
+  teardown :restore_plugins
 
   def test_register
     @klass.register :foo do
@@ -84,10 +78,10 @@ class PluginTest < ActiveSupport::TestCase
   end
 
   def test_menu
-    url_hash = {:controller=>'hosts', :action=>'index'}
+    url_hash = {:controller => 'hosts', :action => 'index'}
     assert_difference 'Menu::Manager.items(:project_menu).size' do
       @klass.register :foo do
-        menu :project_menu, :foo_menu_item, :url_hash=>url_hash, :caption => 'Foo'
+        menu :project_menu, :foo_menu_item, :url_hash => url_hash, :caption => 'Foo'
       end
     end
     menu_item = Menu::Manager.items(:project_menu).detect {|i| i.name == :foo_menu_item}
@@ -190,6 +184,11 @@ class PluginTest < ActiveSupport::TestCase
       name 'Other'
       version other_version
     end
+    other_version_pre = '0.5.0.pre.master'
+    @klass.register :other_pre do
+      name 'Other'
+      version other_version_pre
+    end
     @klass.register :foo do
       test.assert requires_foreman_plugin(:other, '>= 0.1.0')
       test.assert requires_foreman_plugin(:other, other_version)
@@ -199,6 +198,11 @@ class PluginTest < ActiveSupport::TestCase
       test.assert_raise Foreman::PluginRequirementError do
         requires_foreman_plugin(:other, '= 99.0.0')
       end
+      test.assert_raise Foreman::PluginRequirementError do
+        requires_foreman_plugin(:other_pre, '>= 0.4.0', allow_prerelease: false)
+      end
+      test.assert requires_foreman_plugin(:other_pre, '>= 0.4.0', allow_prerelease: true)
+      test.assert requires_foreman_plugin(:other_pre, '>= 0.4.0')
 
       # Missing plugin
       test.assert_raise Foreman::PluginNotFound do
@@ -213,44 +217,55 @@ class PluginTest < ActiveSupport::TestCase
     end
   end
 
-  def test_register_allowed_template_helpers_and_variables
-    refute_includes Foreman::Renderer::ALLOWED_HELPERS, :my_helper
-    refute_includes Foreman::Renderer::ALLOWED_VARIABLES, :my_variable
+  def test_register_allowed_template_helpers
+    Foreman::Renderer.configure { |config| config.allowed_generic_helpers -= [:my_helper] }
+    refute_includes Foreman::Renderer.config.allowed_helpers, :my_helper
 
     @klass.register :foo do
       allowed_template_helpers :my_helper
-      allowed_template_variables :my_variable
     end
+
     # simulate application start
     @klass.find(:foo).to_prepare_callbacks.each(&:call)
+    assert_includes Foreman::Renderer.config.allowed_helpers, :my_helper
+  end
 
-    assert_includes Foreman::Renderer::ALLOWED_HELPERS, :my_helper
-    assert_includes Foreman::Renderer::ALLOWED_VARIABLES, :my_variable
-  ensure
-    Foreman::Renderer::ALLOWED_HELPERS.delete(:my_helper)
-    Foreman::Renderer::ALLOWED_HELPERS.delete(:my_variable)
+  def test_register_allowed_template_variables
+    refute_includes Foreman::Renderer.config.allowed_variables, :my_variable
+
+    @klass.register :foo do
+      allowed_template_variables :my_variable
+    end
+
+    # simulate application start
+    @klass.find(:foo).to_prepare_callbacks.each(&:call)
+    assert_includes Foreman::Renderer.config.allowed_variables, :my_variable
+  end
+
+  def test_register_allowed_global_settings
+    refute_includes Foreman::Renderer.config.allowed_global_settings, :my_global_setting
+
+    @klass.register :foo do
+      allowed_template_global_settings :my_global_setting
+    end
+
+    # simulate application start
+    @klass.find(:foo).to_prepare_callbacks.each(&:call)
+    assert_includes Foreman::Renderer.config.allowed_global_settings, :my_global_setting
   end
 
   def test_extend_rendering_helpers
-    refute Foreman::Renderer.public_instance_methods.include?(:my_helper)
-    refute_includes Foreman::Renderer::ALLOWED_HELPERS, :my_helper
-    refute ::TemplatesController.public_instance_methods.include?(:my_helper)
+    refute_includes Foreman::Renderer::Scope::Base.public_instance_methods, :my_helper
+    refute_includes Foreman::Renderer::Scope::Base.public_instance_methods, :private_helper
 
     @klass.register(:foo) do
       extend_template_helpers(MyMod)
     end
+
     # simulate application start
     @klass.find(:foo).to_prepare_callbacks.each(&:call)
-
-    assert UnattendedHelper.public_instance_methods.include?(:my_helper)
-    refute UnattendedHelper.public_instance_methods.include?(:private_helper)
-    assert_includes Foreman::Renderer::ALLOWED_HELPERS, :my_helper
-    refute_includes Foreman::Renderer::ALLOWED_HELPERS, :private_helper
-    assert ::TemplatesController.public_instance_methods.include?(:my_helper)
-    refute ::TemplatesController.public_instance_methods.include?(:private_helper)
-  ensure
-    Foreman::Renderer::ALLOWED_HELPERS.delete(:my_helper)
-    Foreman::Renderer::ALLOWED_HELPERS.delete(:my_variable)
+    assert_includes Foreman::Renderer::Scope::Base.public_instance_methods, :my_helper
+    refute_includes Foreman::Renderer::Scope::Base.public_instance_methods, :private_helper
   end
 
   def test_add_compute_resource
@@ -364,7 +379,7 @@ class PluginTest < ActiveSupport::TestCase
   end
 
   def test_add_template_label
-    kind = FactoryGirl.build(:template_kind)
+    kind = FactoryBot.build_stubbed(:template_kind)
     Foreman::Plugin.register :test_template_kind do
       name 'Test template kind'
       template_labels kind.name => 'Test plugin template kind'
@@ -402,7 +417,7 @@ class PluginTest < ActiveSupport::TestCase
   def test_hosts_controller_action_scope
     mock_scope = ->(scope) { scope }
     Foreman::Plugin.register :test_hosts_controller_action_scope do
-      add_controller_action_scope HostsController, :test_action, &mock_scope
+      add_controller_action_scope 'HostsController', :test_action, &mock_scope
     end
     scopes = HostsController.scopes_for(:test_action)
     assert_equal mock_scope, scopes.last
@@ -414,7 +429,7 @@ class PluginTest < ActiveSupport::TestCase
       scope
     end
     Foreman::Plugin.register :test_hosts_controller_action_scope_added_to_local do
-      add_controller_action_scope HostsController, :test_action, &mock_scope
+      add_controller_action_scope 'HostsController', :test_action, &mock_scope
     end
     scopes = HostsController.scopes_for(:test_action)
     assert_equal 2, scopes.count
@@ -479,6 +494,25 @@ class PluginTest < ActiveSupport::TestCase
     assert_includes Dashboard::Manager.default_widgets, widget_params
   end
 
+  def test_extend_rabl_template
+    Foreman::Plugin.register :test_extend_rabl_template do
+      extend_rabl_template 'api/v2/hosts/main', 'api/v2/hosts/expiration'
+    end
+    templates = Foreman::Plugin.find(:test_extend_rabl_template).rabl_template_extensions('api/v2/hosts/main')
+    assert_equal ['api/v2/hosts/expiration'], templates
+  end
+
+  def test_add_smart_proxy_reference
+    refs = ProxyReferenceRegistry.smart_proxy_references
+    ProxyReferenceRegistry.references = nil
+    Foreman::Plugin.register :test_add_smart_proxy_reference do
+      smart_proxy_reference :hosts => [:test]
+    end
+    assert_equal [:test], ProxyReferenceRegistry.find_by_relation(:hosts).columns
+  ensure
+    ProxyReferenceRegistry.references = refs
+  end
+
   context "adding permissions" do
     teardown do
       permission = Foreman::AccessControl.permission(:test_permission)
@@ -523,29 +557,14 @@ class PluginTest < ActiveSupport::TestCase
       assert_include Rails.application.config.assets.precompile, 'test_assets_example.js'
     end
 
-    def test_assets_from_settings
-      SETTINGS[:test_assets_from_settings] = { assets: { precompile: [ 'test_assets_example' ] } }
-      Foreman::Deprecation.expects(:deprecation_warning)
-      plugin = Foreman::Plugin.register(:test_assets_from_settings) {}
-      assert_equal ['test_assets_example'], plugin.assets
-      assert_include Rails.application.config.assets.precompile, 'test_assets_example'
-    end
-
-    def test_assets_from_settings_hyphen
-      SETTINGS[:test_assets_from_settings_hyphen] = { assets: { precompile: [ 'test_assets_example' ] } }
-      Foreman::Deprecation.expects(:deprecation_warning)
-      plugin = Foreman::Plugin.register(:'test-assets-from-settings-hyphen') {}
-      assert_equal ['test_assets_example'], plugin.assets
-      assert_include Rails.application.config.assets.precompile, 'test_assets_example'
-    end
-
     def test_assets_from_root
       Dir.mktmpdir do |root|
         FileUtils.mkdir_p File.join(root, 'app', 'assets', 'javascripts', 'test_assets_from_root')
         FileUtils.touch File.join(root, 'app', 'assets', 'javascripts', 'test_outside.js')
         FileUtils.touch File.join(root, 'app', 'assets', 'javascripts', 'test_assets_from_root', 'test_assets_example.js')
 
-        Rails.logger.expects(:warn).with(regexp_matches(/test_outside\.js/))
+        Rails.logger.stubs(:debug)
+        Rails.logger.expects(:debug).with(regexp_matches(/test_outside\.js/))
         plugin = Foreman::Plugin.register(:test_assets_from_root) do
           path root
         end
@@ -580,6 +599,31 @@ class PluginTest < ActiveSupport::TestCase
 
       assert_equal 1, ::Pagelets::Manager.pagelets_at("tests/show", :main_tabs).count
       assert_equal "My Tab", ::Pagelets::Manager.pagelets_at("tests/show", :main_tabs).first.name
+    end
+  end
+
+  describe 'Report scanner' do
+    subject { Foreman::Plugin.register('test') {} }
+    let(:report_scanner) { stub_everything('Object') }
+
+    describe '.register_report_scanner' do
+      it 'adds a class to report_scanner' do
+        refute subject.class.registered_report_scanners.include? report_scanner
+        subject.register_report_scanner report_scanner
+        assert subject.class.registered_report_scanners.include? report_scanner
+      end
+    end
+
+    describe '.unregister_report_scanner' do
+      before do
+        subject.register_report_scanner report_scanner
+      end
+
+      it 'removes a class to report_scanner' do
+        assert subject.class.registered_report_scanners.include? report_scanner
+        subject.unregister_report_scanner report_scanner
+        refute subject.class.registered_report_scanners.include? report_scanner
+      end
     end
   end
 end

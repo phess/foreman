@@ -5,6 +5,7 @@ class HostGroupsHelperTest < ActionView::TestCase
   include HostsAndHostgroupsHelper
   include ApplicationHelper
   include HostsHelper
+  include AuthorizeHelper
   include ::FormHelper
 
   test "should have the full string of the parent class if the child is a substring" do
@@ -53,16 +54,16 @@ class HostGroupsHelperTest < ActionView::TestCase
   end
 
   test "visible_compute_profiles should only show profiles users is authorized to see" do
-    role = FactoryGirl.create(:role)
+    role = FactoryBot.create(:role)
     cp = ComputeProfile.first
-    FactoryGirl.create(:filter, :role => role, :permissions => [permissions(:view_compute_profiles)], :search => "name = #{cp.name}")
-    user = FactoryGirl.create(:user, :roles => [role])
-    host = FactoryGirl.create(:host)
+    FactoryBot.create(:filter, :role => role, :permissions => [permissions(:view_compute_profiles)], :search => "name = #{cp.name}")
+    user = FactoryBot.create(:user, :roles => [role])
+    host = FactoryBot.create(:host)
     as_user(user) do
       assert_equal [cp], visible_compute_profiles(host)
     end
 
-    #allow seeing current cp even if it isn't authorized (to prevent incorrect changes)
+    # allow seeing current cp even if it isn't authorized (to prevent incorrect changes)
     host.update_attribute(:compute_profile, ComputeProfile.second)
     as_user(user) do
       assert_equal [cp, ComputeProfile.second], visible_compute_profiles(host)

@@ -39,12 +39,17 @@ module Facets
     module ClassMethods
       # Change attributes that will be sent to an facet based on inherited values from the hostgroup.
       def inherited_attributes(hostgroup, facet_attributes)
+        _, facet_config = Facets.find_facet_by_class(self, :host)
+
+        if facet_config.has_hostgroup_configuration? && hostgroup
+          facet_attributes = hostgroup.inherited_facet_attributes(facet_config)
+        end
         facet_attributes
       end
 
       # Use this method to populate host's fields based on fact values exposed by the importer.
       # You can populate fields in the associated host's facets too.
-      def populate_fields_from_facts(host, importer, type, proxy_id)
+      def populate_fields_from_facts(host, parser, type, proxy)
       end
     end
   end

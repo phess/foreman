@@ -4,6 +4,7 @@ module HostsHelper
   include ComputeResourcesVmsHelper
   include HostsNicHelper
   include BmcHelper
+  include AuthorizeHelper
 
   def provider_partial_exist?(compute_resource, partial)
     return false unless compute_resource
@@ -51,23 +52,20 @@ module HostsHelper
   def host_taxonomy_select(f, taxonomy)
     taxonomy_id = "#{taxonomy.to_s.downcase}_id"
     selected_taxonomy = @host.new_record? ? taxonomy.current.try(:id) : @host.send(taxonomy_id)
+    label = _(taxonomy.to_s)
     select_opts = { :include_blank => !@host.managed? || @host.send(taxonomy_id).nil?,
                     :selected => selected_taxonomy }
     html_opts = { :disabled => !@host.new_record?,
                   :onchange => "#{taxonomy.to_s.downcase}_changed(this);",
-                  :label => _(taxonomy.to_s),
+                  :label => label,
                   :'data-host-id' => @host.id,
                   :'data-url' => process_taxonomy_hosts_path,
                   :help_inline => :indicator,
                   :required => true }
+    html_opts[:label_help] = (_("%s can be changed using bulk action on the All Hosts page") % taxonomy) unless @host.new_record?
 
     select_f f, taxonomy_id.to_sym, taxonomy.send("my_#{taxonomy.to_s.downcase.pluralize}"), :id, :to_label,
             select_opts, html_opts
-  end
-
-  def new_host_title
-    t = _("Create Host")
-    title(t, (t + ' <span id="hostFQDN"></span>').html_safe)
   end
 
   def flags_for_nic(nic)
@@ -99,7 +97,8 @@ module HostsHelper
   # method that reformat the hostname column by adding the status icons
   def name_column(host)
     style = host_global_status_icon_class_for_host(host)
-    tooltip = host.host_statuses.select(&:relevant?).sort_by(&:type).map { |status| "#{_(status.name)}: #{_(status.to_label)}" }.join(', ')
+    displayable_statuses = host.host_statuses.select { |status| status.relevant? && !status.substatus? }
+    tooltip = displayable_statuses.sort_by(&:type).map { |status| "#{_(status.name)}: #{_(status.to_label)}" }.join(', ')
 
     content = content_tag(:span, "", {:rel => "twipsy", :class => style, :"data-original-title" => tooltip})
     content += link_to("  #{host}", host_path(host))
@@ -163,7 +162,7 @@ module HostsHelper
       actions.insert(1, [_('Build Hosts'), multiple_build_hosts_path]) if SETTINGS[:unattended]
       actions <<  [_('Assign Organization'), select_multiple_organization_hosts_path] if SETTINGS[:organizations_enabled]
       actions <<  [_('Assign Location'), select_multiple_location_hosts_path] if SETTINGS[:locations_enabled]
-      actions <<  [_('Change Owner'), select_multiple_owner_hosts_path] if SETTINGS[:login]
+      actions <<  [_('Change Owner'), select_multiple_owner_hosts_path]
       actions <<  [_('Change Puppet Master'), select_multiple_puppet_proxy_hosts_path] if SmartProxy.unscoped.authorized.with_features("Puppet").exists?
       actions <<  [_('Change Puppet CA'), select_multiple_puppet_ca_proxy_hosts_path] if SmartProxy.unscoped.authorized.with_features("Puppet CA").exists?
     end
@@ -177,7 +176,7 @@ module HostsHelper
     select_action_button(_("Select Action"), {:id => 'submit_multiple'},
       multiple_actions.map do |action|
         # If the action array has 3 entries, the third one is whether to use a modal dialog or not
-        modal = action.size == 3 ? action[3] : true
+        modal = (action.size == 3) ? action[3] : true
         if modal
           link_to_function(action[0], "build_modal(this, '#{action[1]}')", :'data-dialog-title' => _("%s - The following hosts are about to be changed") % action[0])
         else
@@ -206,28 +205,28 @@ module HostsHelper
   end
 
   def resources_chart(timerange = 1.day.ago)
-    applied, failed, restarted, failed_restarts, skipped = [],[],[],[],[]
+    applied, failed, restarted, failed_restarts, skipped = [], [], [], [], []
     @host.reports.recent(timerange).each do |r|
-      applied         << [r.reported_at.to_i*1000, r.applied ]
-      failed          << [r.reported_at.to_i*1000, r.failed ]
-      restarted       << [r.reported_at.to_i*1000, r.restarted ]
-      failed_restarts << [r.reported_at.to_i*1000, r.failed_restarts ]
-      skipped         << [r.reported_at.to_i*1000, r.skipped ]
+      applied         << [r.reported_at.to_i * 1000, r.applied ]
+      failed          << [r.reported_at.to_i * 1000, r.failed ]
+      restarted       << [r.reported_at.to_i * 1000, r.restarted ]
+      failed_restarts << [r.reported_at.to_i * 1000, r.failed_restarts ]
+      skipped         << [r.reported_at.to_i * 1000, r.skipped ]
     end
-    [{:label=>_("Applied"), :data=>applied,:color =>'#89A54E'},
-     {:label=>_("Failed"), :data=>failed,:color =>'#AA4643'},
-     {:label=>_("Failed restarts"), :data=>failed_restarts,:color =>'#EC971F'},
-     {:label=>_("Skipped"), :data=>skipped,:color =>'#80699B'},
-     {:label=>_("Restarted"), :data=>restarted,:color =>'#4572A7'}]
+    [{:label => _("Applied"), :data => applied, :color => '#89A54E'},
+     {:label => _("Failed"), :data => failed, :color => '#AA4643'},
+     {:label => _("Failed restarts"), :data => failed_restarts, :color => '#EC971F'},
+     {:label => _("Skipped"), :data => skipped, :color => '#80699B'},
+     {:label => _("Restarted"), :data => restarted, :color => '#4572A7'}]
   end
 
   def runtime_chart(timerange = 1.day.ago)
     config, runtime = [], []
     @host.reports.recent(timerange).each do |r|
-      config  << [r.reported_at.to_i*1000, r.config_retrieval]
-      runtime << [r.reported_at.to_i*1000, r.runtime]
+      config  << [r.reported_at.to_i * 1000, r.config_retrieval]
+      runtime << [r.reported_at.to_i * 1000, r.runtime]
     end
-    [{:label=>_("Config Retrieval"), :data=> config, :color=>'#AA4643'},{:label=>_("Runtime"), :data=> runtime,:color=>'#4572A7'}]
+    [{:label => _("Config Retrieval"), :data => config, :color => '#AA4643'}, {:label => _("Runtime"), :data => runtime, :color => '#4572A7'}]
   end
 
   def reports_show
@@ -237,8 +236,8 @@ module HostsHelper
 
     form_tag @host, :id => 'days_filter', :method => :get, :class => "form form-inline" do
       content_tag(:span, (_("Found %{count} reports from the last %{days} days") %
-        { :days  => select(nil, 'range', 1..number_of_days,
-                    {:selected => @range}, {:style=>"float:none; width: #{width}em;", :onchange =>"$('#days_filter').submit();$(this).disabled();"}),
+        { :days => select(nil, 'range', 1..number_of_days,
+                    {:selected => @range}, {:style => "float:none; width: #{width}em;", :onchange => "$('#days_filter').submit();$(this).disabled();"}),
           :count => @host.reports.recent(@range.days.ago).count }).html_safe)
     end
   end
@@ -248,33 +247,46 @@ module HostsHelper
     (SETTINGS[:unattended] && host.managed?) ? host.shortname : host.name
   end
 
+  def build_duration(host)
+    return _('N/A') if host.initiated_at.nil? || host.installed_at.nil?
+    if host.installed_at.nil?
+      time_ago_in_words(host.initiated_at, include_seconds: true) + " (in progress)"
+    else
+      distance_of_time_in_words(host.initiated_at, host.installed_at, include_seconds: true)
+    end
+  end
+
   def overview_fields(host)
     global_status = host.build_global_status
     fields = [
-      [_("Status"), content_tag(:span, ''.html_safe, :class => host_global_status_icon_class(global_status.status)) +
-                    content_tag(:span, _(global_status.to_label), :class => host_global_status_class(global_status.status))
+      [
+        _("Status"),
+        content_tag(:span, ''.html_safe, :class => host_global_status_icon_class(global_status.status)) +
+          content_tag(:span, _(global_status.to_label), :class => host_global_status_class(global_status.status))
       ]
     ]
     fields += host_detailed_status_list(host)
-    fields += [[_("Domain"), (link_to(host.domain, hosts_path(:search => %{domain = "#{host.domain}"})))]] if host.domain.present?
-    fields += [[_("Realm"), (link_to(host.realm, hosts_path(:search => %{realm = "#{host.realm}"})))]] if host.realm.present?
+    fields += [[_("Build duration"), build_duration(host)]]
+    fields += [[_("Build errors"), link_to("Logs from OS installer", build_errors_host_path(:id => host.id))]] if host.build_errors.present?
+    fields += [[_("Token"), host.token || _("N/A")]] if User.current.admin?
+    fields += [[_("Domain"), link_to(host.domain, hosts_path(:search => %{domain = "#{host.domain}"}))]] if host.domain.present?
+    fields += [[_("Realm"), link_to(host.realm, hosts_path(:search => %{realm = "#{host.realm}"}))]] if host.realm.present?
     fields += [[_("IP Address"), host.ip]] if host.ip.present?
     fields += [[_("IPv6 Address"), host.ip6]] if host.ip6.present?
     fields += [[_("Comment"), host.comment]] if host.comment.present?
     fields += [[_("MAC Address"), host.mac]] if host.mac.present?
-    fields += [[_("Puppet Environment"), (link_to(host.environment, hosts_path(:search => %{environment = "#{host.environment}"})))]] if host.environment.present?
-    fields += [[_("Architecture"), (link_to(host.arch, hosts_path(:search => %{architecture = "#{host.arch}"})))]] if host.arch.present?
-    fields += [[_("Operating System"), (link_to(host.operatingsystem.to_label, hosts_path(:search => %{os_title = "#{host.operatingsystem.title}"})))]] if host.operatingsystem.present?
-    fields += [[_("PXE Loader"), host.pxe_loader]] if host.operatingsystem.present? && host.pxe_build?
-    fields += [[_("Host group"), (link_to(host.hostgroup, hosts_path(:search => %{hostgroup_title = "#{host.hostgroup}"})))]] if host.hostgroup.present?
+    fields += [[_("Puppet Environment"), link_to(host.environment, hosts_path(:search => %{environment = "#{host.environment}"}))]] if host.environment.present?
+    fields += [[_("Architecture"), link_to(host.arch, hosts_path(:search => %{architecture = "#{host.arch}"}))]] if host.arch.present?
+    fields += [[_("Operating System"), link_to(host.operatingsystem.to_label, hosts_path(:search => %{os_title = "#{host.operatingsystem.title}"}))]] if host.operatingsystem.present?
+    fields += [[_("PXE Loader"), host.pxe_loader]] if host.operatingsystem.present? && !host.image_build?
+    fields += [[_("Host group"), link_to(host.hostgroup, hosts_path(:search => %{hostgroup_title = "#{host.hostgroup}"}))]] if host.hostgroup.present?
+    fields += [[_("Uptime"), time_ago_in_words(host.uptime_seconds.seconds.from_now)]] if host.uptime_seconds.present?
     fields += [[_("Location"), (link_to(host.location.title, hosts_path(:search => %{location = "#{host.location}"})) if host.location)]] if SETTINGS[:locations_enabled]
     fields += [[_("Organization"), (link_to(host.organization.title, hosts_path(:search => %{organization = "#{host.organization}"})) if host.organization)]] if SETTINGS[:organizations_enabled]
-    if SETTINGS[:login]
-      if host.owner_type == _("User")
-        fields += [[_("Owner"), (link_to(host.owner, hosts_path(:search => %{user.login = "#{host.owner.login}"})) if host.owner)]]
-      else
-        fields += [[_("Owner"), host.owner]]
-      end
+    if host.owner_type == _("User")
+      fields += [[_("Owner"), (link_to(host.owner, hosts_path(:search => %{user.login = "#{host.owner.login}"})) if host.owner)]]
+    else
+      fields += [[_("Owner"), host.owner]]
     end
     fields += [[_("Certificate Name"), host.certname]] if Setting[:use_uuid_for_certificates]
     fields
@@ -282,7 +294,7 @@ module HostsHelper
 
   def host_detailed_status_list(host)
     host.host_statuses.sort_by(&:type).map do |status|
-      next unless status.relevant?
+      next unless status.relevant? && !status.substatus?
       [
         _(status.name),
         content_tag(:span, ' '.html_safe, :class => host_global_status_icon_class(status.to_global)) +
@@ -309,7 +321,7 @@ module HostsHelper
       button_group(
         link_to_if_authorized(_("Edit"), hash_for_edit_host_path(:id => host).merge(:auth_object => host),
                                 :title    => _("Edit this host"), :id => "edit-button", :class => 'btn btn-default'),
-        display_link_if_authorized(_("Clone"), hash_for_clone_host_path(:id => host).merge(:auth_object => host),
+        display_link_if_authorized(_("Clone"), hash_for_clone_host_path(:id => host).merge(:auth_object => host, :permission => 'create_hosts'),
                                 :title    => _("Clone this host"), :id => "clone-button", :class => 'btn btn-default'),
         if host.build
           link_to_if_authorized(_("Cancel build"), hash_for_cancelBuild_host_path(:id => host).merge(:auth_object => host, :permission => 'build_hosts'),
@@ -330,7 +342,7 @@ module HostsHelper
       ),
       if host.supports_power?
         button_group(
-            link_to(_("Loading power state ..."), '#', :disabled => true, :class => 'btn btn-default', :id => :loading_power_state)
+          link_to(_("Loading power state ..."), '#', :disabled => true, :class => 'btn btn-default', :id => :loading_power_state)
         )
       end,
       button_group(
@@ -338,7 +350,7 @@ module HostsHelper
           link_to_if_authorized(_("Run puppet"), hash_for_puppetrun_host_path(:id => host).merge(:auth_object => host, :permission => 'puppetrun_hosts'),
                                 :disabled => !Setting[:puppetrun],
                                 :class => 'btn btn-default',
-                                :title    => _("Trigger a puppetrun on a node; requires that puppet run is enabled"))
+                                :title => _("Trigger a puppetrun on a node; requires that puppet run is enabled"))
         end
       ),
       button_group(
@@ -353,7 +365,11 @@ module HostsHelper
 
   def delete_host_dialog(host)
     if host.compute?
-      _("Are you sure you want to delete host %s? This will delete the virtual machine and its disks, and is irreversible.") % host.name
+      if Setting[:destroy_vm_on_host_delete]
+        _("Are you sure you want to delete host %s? This will delete the VM and its disks, and is irreversible. This behavior can be changed via global setting \"Destroy associated VM on host delete\".") % host.name
+      else
+        _("Are you sure you want to delete host %s? It is irreversible, but VM and its disks will not be deleted. This behavior can be changed via global setting \"Destroy associated VM on host delete\".") % host.name
+      end
     else
       _("Are you sure you want to delete host %s? This action is irreversible.") % host.name
     end
@@ -384,7 +400,8 @@ module HostsHelper
   end
 
   def show_appropriate_host_buttons(host)
-    [ link_to_if_authorized(_("Audits"), hash_for_host_audits_path(:host_id => @host), :title => _("Host audit entries"), :class => 'btn btn-default'),
+    [
+      link_to_if_authorized(_("Audits"), hash_for_host_audits_path(:host_id => @host), :title => _("Host audit entries"), :class => 'btn btn-default'),
       (link_to_if_authorized(_("Facts"), hash_for_host_facts_path(:host_id => host), :title => _("Browse host facts"), :class => 'btn btn-default') if host.fact_values.any?),
       (link_to_if_authorized(_("Reports"), hash_for_host_config_reports_path(:host_id => host), :title => _("Browse host config management reports"), :class => 'btn btn-default') if host.reports.any?),
       (link_to(_("YAML"), externalNodes_host_path(:name => host), :title => _("Puppet external nodes YAML dump"), :class => 'btn btn-default') if SmartProxy.with_features("Puppet").any?)
@@ -402,13 +419,14 @@ module HostsHelper
         content_tag :button, _(label), :type => 'button', :href => '#',
           :name => 'allocation_radio_btn',
           :class => (label == active) ? 'btn btn-default active' : 'btn btn-default',
-          :onclick => "allocation_switcher(this, '#{label}');",
-          :data => { :toggle => 'button' }
+          :onclick => "tfm.computeResource.libvirt.allocationSwitcher(this, '#{label}');",
+          :data => { :toggle => 'button' },
+          :id => (label == 'Full') ? 'btnAllocationFull' : nil
       end.join(' ').html_safe
     end)
   end
 
-# helper method to provide data attribute if subnets has ipam enabled / disabled
+  # helper method to provide data attribute if subnets has ipam enabled / disabled
   def subnets_ipam_data(field)
     data = {}
     domain_subnets(field).each do |subnet|
@@ -428,9 +446,9 @@ module HostsHelper
     return '' if nic.new_record?
 
     if nic.link
-      status = '<i class="glyphicon glyphicon glyphicon-arrow-up interface-up" title="'+ _('Interface is up') +'"></i>'
+      status = '<i class="glyphicon glyphicon glyphicon-arrow-up interface-up" title="' + _('Interface is up') + '"></i>'
     else
-      status = '<i class="glyphicon glyphicon glyphicon-arrow-down interface-down" title="'+ _('Interface is down') +'"></i>'
+      status = '<i class="glyphicon glyphicon glyphicon-arrow-down interface-down" title="' + _('Interface is down') + '"></i>'
     end
     status.html_safe
   end
@@ -481,11 +499,17 @@ module HostsHelper
   end
 
   def randomize_mac_link
-    link_to_function(icon_text('random'), 'randomizeName()', :class => 'btn btn-default',
-      :title => _('Generate new random name. Visit Settings to disable this feature.')) if NameGenerator.random_based?
+    if NameGenerator.random_based?
+      link_to_function(icon_text('random'), 'randomizeName()', :class => 'btn btn-default',
+        :title => _('Generate new random name. Visit Settings to disable this feature.'))
+    end
   end
 
   def power_status_visible?
     SETTINGS[:unattended] && Setting[:host_power_status]
+  end
+
+  def host_breadcrumb
+    breadcrumbs(resource_url: "/api/v2/hosts?thin=true'")
   end
 end

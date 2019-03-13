@@ -1,5 +1,4 @@
-# Read about fixtures at http://ar.rubyonrails.org/classes/Fixtures.html
-
+---
 common:
   name: Common
   architecture: x86_64
@@ -40,7 +39,7 @@ parent:
   puppet_proxy: puppetmaster
   puppet_ca_proxy: puppetmaster
   domain: mydomain
-  subnet: three
+  subnet: five
   subnet6: six
   compute_profile: one
   id: 1

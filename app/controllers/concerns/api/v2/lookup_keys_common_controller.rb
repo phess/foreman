@@ -22,18 +22,18 @@ module Api::V2::LookupKeysCommonController
   end
 
   def smart_variable_id?
-    params.keys.include?('smart_variable_id') || controller_name.match(/smart_variables/)
+    params.key?('smart_variable_id') || controller_name.match(/smart_variables/)
   end
 
   def smart_class_parameter_id?
-    params.keys.include?('smart_class_parameter_id') || controller_name.match(/smart_class_parameters/)
+    params.key?('smart_class_parameter_id') || controller_name.match(/smart_class_parameters/)
   end
 
   [Puppetclass, Environment, Host::Base, Hostgroup].each do |model|
     model_string = model.to_s.split('::').first.downcase
 
     define_method("#{model_string}_id?") do
-      params.keys.include?("#{model_string}_id")
+      params.key?("#{model_string}_id")
     end
 
     define_method("find_#{model_string}") do
@@ -48,11 +48,12 @@ module Api::V2::LookupKeysCommonController
   end
 
   def find_smart_variable
-    id = params.keys.include?('smart_variable_id') ? params['smart_variable_id'] : params['id']
+    id = params.key?('smart_variable_id') ? params['smart_variable_id'] : params['id']
     @smart_variable   = VariableLookupKey.authorized(:view_external_variables).smart_variables.find_by_id(id.to_i) if id.to_i > 0
-    @smart_variable ||= (puppet_cond = { :puppetclass_id => @puppetclass.id } if @puppetclass
-                         VariableLookupKey.authorized(:view_external_variables).smart_variables.where(puppet_cond).find_by_key(id.to_s)
-                        )
+    @smart_variable ||= begin
+                          puppet_cond = { :puppetclass_id => @puppetclass.id } if @puppetclass
+                          VariableLookupKey.authorized(:view_external_variables).smart_variables.where(puppet_cond).find_by_key(id.to_s)
+                        end
     @smart_variable
   end
 
@@ -69,12 +70,13 @@ module Api::V2::LookupKeysCommonController
   end
 
   def find_smart_class_parameter
-    id = params.keys.include?('smart_class_parameter_id') ? params['smart_class_parameter_id'] : params['id']
+    id = params.key?('smart_class_parameter_id') ? params['smart_class_parameter_id'] : params['id']
     @smart_class_parameter = PuppetclassLookupKey.authorized(:view_external_parameters).smart_class_parameters.find_by_id(id.to_i) if id.to_i > 0
-    @smart_class_parameter ||= (puppet_cond = { 'environment_classes.puppetclass_id'=> @puppetclass.id } if @puppetclass
-                                env_cond = { 'environment_classes.environment_id' => @environment.id } if @environment
-                                PuppetclassLookupKey.authorized(:view_external_parameters).smart_class_parameters.where(puppet_cond).where(env_cond).where(:key => id).first
-                               )
+    @smart_class_parameter ||= begin
+                                 puppet_cond = { 'environment_classes.puppetclass_id' => @puppetclass.id } if @puppetclass
+                                 env_cond = { 'environment_classes.environment_id' => @environment.id } if @environment
+                                 PuppetclassLookupKey.authorized(:view_external_parameters).smart_class_parameters.where(puppet_cond).where(env_cond).where(:key => id).first
+                               end
     @smart_class_parameter
   end
 
@@ -119,9 +121,9 @@ module Api::V2::LookupKeysCommonController
     if (@smarts && @smart && !@smarts.find_by_id(@smart.id)) || (@smarts && !@smart)
       obj = smart_variable_id? ? "Smart variable" : "Smart class parameter"
       id = if smart_variable_id?
-             params.keys.include?('smart_variable_id') ? params['smart_variable_id'] : params['id']
+             params.key?('smart_variable_id') ? params['smart_variable_id'] : params['id']
            else
-             params.keys.include?('smart_class_parameter_id') ? params['smart_variable_id'] : params['id']
+             params.key?('smart_class_parameter_id') ? params['smart_variable_id'] : params['id']
            end
       not_found "#{obj} not found by id '#{id}'"
     end
@@ -134,7 +136,7 @@ module Api::V2::LookupKeysCommonController
   end
 
   def cast_value(obj = :override_value, value = :value)
-    return unless params[obj] && params[obj].key?(value)
+    return unless params[obj]&.key?(value)
     param_value = params[obj][value]
     return if param_value.is_a?(Hash)
     params[obj][value] = param_value.to_s

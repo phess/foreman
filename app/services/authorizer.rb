@@ -26,24 +26,24 @@ class Authorizer
 
   def find_collection(resource_class, options = {})
     permission = options.delete :permission
+    resource_class = Host if resource_class == Host::Base
+
     Foreman::Logging.logger('permissions').debug "checking permission #{permission} for class #{resource_class}"
 
     # retrieve all filters relevant to this permission for the user
     base = user.filters.joins(:permissions).where(["#{Permission.table_name}.resource_type = ?", resource_name(resource_class)])
     all_filters = permission.nil? ? base : base.where(["#{Permission.table_name}.name = ?", permission])
 
-    if Taxonomy.enabled_taxonomies.any?
-      organization_ids = allowed_organizations(resource_class)
-      Foreman::Logging.logger('permissions').debug "organization_ids: #{organization_ids.inspect}"
-      location_ids = allowed_locations(resource_class)
-      Foreman::Logging.logger('permissions').debug "location_ids: #{location_ids.inspect}"
+    organization_ids = allowed_organizations(resource_class)
+    Foreman::Logging.logger('permissions').debug "organization_ids: #{organization_ids.inspect}"
+    location_ids = allowed_locations(resource_class)
+    Foreman::Logging.logger('permissions').debug "location_ids: #{location_ids.inspect}"
 
-      organizations, locations, values = taxonomy_conditions(organization_ids, location_ids)
-      all_filters = all_filters.joins(taxonomy_join).where(["#{TaxableTaxonomy.table_name}.id IS NULL " +
-                                                                "OR (#{organizations}) " +
-                                                                "OR (#{locations})",
-                                                            *values]).distinct
-    end
+    organizations, locations, values = taxonomy_conditions(organization_ids, location_ids)
+    all_filters = all_filters.joins(taxonomy_join).where(["#{TaxableTaxonomy.table_name}.id IS NULL " +
+                                                              "OR (#{organizations}) " +
+                                                              "OR (#{locations})",
+                                                          *values]).distinct
 
     all_filters = all_filters.reorder(nil).to_a # load all records, so #empty? does not call extra COUNT(*) query
     Foreman::Logging.logger('permissions').debug do
@@ -65,7 +65,7 @@ class Authorizer
       scope_components[:where] << options[:where] if options[:where].present?
 
       # apply every where clause to the scope consecutively
-      scope_components[:where].inject(scope) do |scope_build,where|
+      scope_components[:where].inject(scope) do |scope_build, where|
         where.is_a?(Hash) ? scope_build.where(resource_class.table_name => where) : scope_build.where(where)
       end
     else
@@ -76,7 +76,7 @@ class Authorizer
       end
 
       scope = scope.joins(scope_components[:joins]).readonly(false)
-      scope_components[:where].inject(scope) { |scope_build,where| scope_build.where(where) }
+      scope_components[:where].inject(scope) { |scope_build, where| scope_build.where(where) }
     end
   end
 
@@ -104,7 +104,7 @@ class Authorizer
   def build_scoped_search_condition(filters)
     raise ArgumentError if filters.blank?
 
-    strings = filters.map { |f| "(#{f.search_condition.blank? ? '1=1' : f.search_condition})" }
+    strings = filters.map { |f| "(#{f.search_condition.presence || '1=1'})" }
     strings.join(' OR ')
   end
 
@@ -126,11 +126,17 @@ class Authorizer
   #   for normal user we allow user taxonomies only
   def allowed_taxonomies(resource_class, type)
     taxonomy_ids = []
-    if resource_class.respond_to?("used_#{type}_ids")
-      taxonomy_ids = resource_class.send("used_#{type}_ids")
-      if taxonomy_ids.empty? && !user.try(:admin?)
-        taxonomy_ids = user.try("#{type}_ids")
-      end
+    if resource_class&.allows_taxonomy_filtering?("#{type}_id") &&
+       resource_class.respond_to?("used_#{type}_ids")
+      taxonomy_ids = used_taxonomy_ids_for(resource_class, type)
+    end
+    taxonomy_ids
+  end
+
+  def used_taxonomy_ids_for(resource_class, type)
+    taxonomy_ids = resource_class.send("used_#{type}_ids")
+    if taxonomy_ids.empty? && !user.try(:admin?)
+      taxonomy_ids = user.try("#{type}_ids")
     end
     taxonomy_ids
   end
@@ -169,6 +175,6 @@ class Authorizer
   def base_ids
     raise ArgumentError, 'you must set base_collection to get base_ids' if @base_collection.nil?
 
-    @base_ids ||= @base_collection.all? { |i| i.is_a?(Integer) } ? @base_collection : @base_collection.map(&:id)
+    @base_ids ||= (@base_collection.all? { |i| i.is_a?(Integer) }) ? @base_collection : @base_collection.map(&:id)
   end
 end

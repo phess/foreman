@@ -4,11 +4,11 @@ namespace :db do
   desc <<-END_DESC
 Make a dump of your database
 
-Foreman will make a dump of your database at the provided location, or it will put it in #{File.expand_path('../../../db', __FILE__)} if no destination file is provided.
+Foreman will make a dump of your database at the provided location, or it will put it in #{File.expand_path('../../db', __dir__)} if no destination file is provided.
 A valid config/database.yml file with the database details is needed to perform this operation.
 
 Available conditions:
-  * destination => path to dump output file (defaults to #{File.expand_path('../../../db', __FILE__)}/foreman.EPOCH.sql)
+  * destination => path to dump output file (defaults to #{File.expand_path('../../db', __dir__)}/foreman.EPOCH.sql)
   * tables => optional comma separated list of tables (you can use regex to match multiple)
               Specifies the list of tables to include in the dump.
               This option works for postgres and mysql only.
@@ -20,8 +20,8 @@ END_DESC
 
   task :dump => :environment do
     config      = Rails.configuration.database_configuration[Rails.env]
-    backup_dir  = File.expand_path('../../../db', __FILE__)
-    backup_name = ENV['destination'] || File.join(backup_dir,"foreman.#{Time.now.to_i}")
+    backup_dir  = File.expand_path('../../db', __dir__)
+    backup_name = ENV['destination'] || File.join(backup_dir, "foreman.#{Time.now.to_i}")
     unless ENV["destination"].present?
       if config["adapter"] == "sqlite3"
         backup_name << '.sqlite3'
@@ -61,7 +61,7 @@ END_DESC
     cmd += " -p#{config['password']} " if config['password'].present?
     cmd += " -h #{config['host']} "    if config['host'].present?
     cmd += " -P #{config['port']} "    if config['port'].present?
-    cmd += " #{tables.join(" ")} " unless tables.blank?
+    cmd += " #{tables.join(' ')} " if tables.present?
     cmd += " > #{name}"
     system(cmd)
   end
@@ -70,7 +70,7 @@ END_DESC
     cmd = "pg_dump -Fc #{config['database']} -U #{config['username']} "
     cmd += " -h #{config['host']} "    if config['host'].present?
     cmd += " -p #{config['port']} "    if config['port'].present?
-    cmd += " " + (tables.map {|t| "-t #{t}"}).join(" ") + " " unless tables.blank?
+    cmd += " " + (tables.map {|t| "-t #{t}"}).join(" ") + " " if tables.present?
     cmd += " > #{name}"
     system({'PGPASSWORD' => config['password']}, cmd)
   end
@@ -105,8 +105,10 @@ Available conditions:
 END_DESC
 
   task :import_dump => :environment do
-    puts "Run this task with a file argument with the location of your db dump,
-          'rake db:import_dump file=DBDUMPLOCATION" and return unless ENV['file']
+    unless ENV['file']
+      puts "Run this task with a file argument with the location of your db dump,
+            'rake db:import_dump file=DBDUMPLOCATION" and return
+    end
     config = Rails.configuration.database_configuration[Rails.env]
 
     puts "Your backup is going to be imported from: #{ENV['file']}"

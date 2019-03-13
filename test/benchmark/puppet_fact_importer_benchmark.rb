@@ -13,9 +13,9 @@ class StructuredFactImporter
 end
 
 def generate_facts(total, unique_names = 0, structured_names = 0)
-  facts = Hash[(1..total).map{|i| ["fact_#{i}", "value_#{i}"]}]
-  (total..total+unique_names).map{|i| facts["fact_#{i}_#{Foreman.uuid}"] = "value_#{i}"}
-  (total..total+structured_names).map{|i| facts[(["f#{i}"] * (i % 10)).join('::') + i.to_s] = "value_#{i}"}
+  facts = Hash[(1..total).map {|i| ["fact_#{i}", "value_#{i}"]}]
+  (total..total + unique_names).map {|i| facts["fact_#{i}_#{Foreman.uuid}"] = "value_#{i}"}
+  (total..total + structured_names).map {|i| facts[(["f#{i}"] * (i % 10)).join('::') + i.to_s] = "value_#{i}"}
   facts
 end
 
@@ -31,7 +31,7 @@ foreman_benchmark do
           [0, 25].each do |structured_names|
             facts = generate_facts(total_facts, unique_names, structured_names)
             x.report("#{importer} (#{total_facts}) - #{unique_names} UN #{structured_names} SN") do
-              host = FactoryGirl.create(:host, :name => "benchmark-#{Foreman.uuid}")
+              host = FactoryBot.create(:host, :name => "benchmark-#{Foreman.uuid}")
               importer.new(host, facts).import!
               importer.new(host, {}).import!
             end

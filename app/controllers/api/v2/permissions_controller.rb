@@ -10,10 +10,11 @@ module Api
       param_group :search_and_pagination, ::Api::V2::BaseController
       param :resource_type, String
       param :name, String
+      add_scoped_search_description_for(Permission)
 
       def index
-        type = params[:resource_type].blank? ? nil : params[:resource_type]
-        name = params[:name].blank? ? nil : params[:name]
+        type = params[:resource_type].presence
+        name = params[:name].presence
         if type
           @permissions = Permission.where(:resource_type => type).paginate(paginate_options)
         elsif name
@@ -30,7 +31,7 @@ module Api
       def show
       end
 
-      api :GET, "/permissions/resource_types/", N_("List available resource types.")
+      api :GET, "/permissions/resource_types/", N_("List available resource types")
       def resource_types
         @resource_types = Permission.resources
         @total = @resource_types.size

@@ -5,7 +5,7 @@ Foreman::Application.routes.draw do
     end
   end
 
-  #ENC requests goes here
+  # ENC requests goes here
   get "node/:name" => 'hosts#externalNodes', :constraints => { :name => /[^\.][\w\.-]+/ }
 
   resources :config_reports, :only => [:index, :show, :destroy] do
@@ -19,17 +19,16 @@ Foreman::Application.routes.draw do
     resources :hosts do
       member do
         get 'clone'
-        get 'storeconfig_klasses'
         get 'externalNodes'
         get 'review_before_build'
         put 'setBuild'
         get 'cancelBuild'
+        get 'build_errors'
         get 'puppetrun'
         get 'pxe_config'
         put 'toggle_manage'
         post 'environment_selected'
         put 'power'
-        get 'power', :to => 'hosts#get_power_state'
         get 'console'
         get 'overview'
         get 'bmc'
@@ -106,11 +105,11 @@ Foreman::Application.routes.draw do
         resources :facts, :only => :index, :controller => :fact_values
         resources :puppetclasses, :only => :index
 
-        get 'parent_facts/:parent_fact/facts', :to => 'fact_values#index', :as => 'parent_fact_facts'
+        get 'parent_facts/:parent_fact/facts', :to => 'fact_values#index', :as => 'parent_fact_facts', :parent_fact => /[\w.:_-]+/
       end
     end
 
-    resources :bookmarks, :except => [:show] do
+    resources :bookmarks, :except => [:show, :new, :create] do
       collection do
         get 'auto_complete_search'
       end
@@ -251,69 +250,92 @@ Foreman::Application.routes.draw do
     end
   end
 
+  resources :http_proxies, :controller => 'http_proxies' do
+    collection do
+      get 'auto_complete_search'
+      put 'test_connection'
+    end
+  end
+
   resources :fact_values, :only => [:index] do
     collection do
       get 'auto_complete_search'
     end
   end
 
-  resources :audits do
+  resources :audits, :only => [:index] do
     collection do
       get 'auto_complete_search'
     end
   end
 
-  if SETTINGS[:login]
-    resources :usergroups, :except => [:show] do
-      collection do
-        get 'auto_complete_search'
-      end
+  resources :usergroups, :except => [:show] do
+    collection do
+      get 'auto_complete_search'
     end
-    resources :users, :except => [:show] do
-      collection do
-        get 'login'
-        post 'login'
-        get 'logout'
-        post 'logout'
-        get 'extlogin'
-        get 'extlogout'
-        get 'auth_source_selected'
-        get 'auto_complete_search'
-      end
-      resources :ssh_keys, :only => [:new, :create, :destroy]
+  end
+  resources :users, :except => [:show] do
+    collection do
+      get 'login'
+      post 'login'
+      get 'logout'
+      post 'logout'
+      get 'extlogin'
+      get 'extlogout'
+      get 'auto_complete_search'
     end
-    resources :roles, :except => [:show] do
+    resources :ssh_keys, :only => [:new, :create, :destroy]
+  end
+  resources :roles, :except => [:show] do
+    member do
+      get 'clone'
+      patch 'disable_filters_overriding'
+    end
+    collection do
+      get 'auto_complete_search'
+    end
+  end
+
+  resources :filters, :except => [:show] do
+    member do
+      patch 'disable_overriding'
+    end
+    collection do
+      get 'auto_complete_search'
+    end
+  end
+
+  resources :permissions, :only => [:index]
+
+  resources :auth_source_ldaps, :except => [:show] do
+    collection do
+      put 'test_connection'
+    end
+  end
+
+  put 'users/(:id)/test_mail', :to => 'users#test_mail', :as => 'test_mail_user'
+
+  resources :external_usergroups, :except => [:index, :new, :create, :show, :edit, :update, :destroy] do
+    member do
+      put 'refresh'
+    end
+  end
+
+  scope 'templates' do
+    resources :report_templates, :except => [:show] do
       member do
-        get 'clone'
-        patch 'disable_filters_overriding'
+        get 'clone_template'
+        get 'lock'
+        get 'unlock'
+        get 'export'
+        get 'generate'
+        post 'schedule_report'
+        post 'preview'
       end
       collection do
+        post 'preview'
+        get 'revision'
         get 'auto_complete_search'
-      end
-    end
-
-    resources :filters, :except => [:show] do
-      member do
-        patch 'disable_overriding'
-      end
-      collection do
-        get 'auto_complete_search'
-      end
-    end
-
-    resources :permissions, :only => [:index]
-
-    resources :auth_source_ldaps, :except => [:show] do
-      collection do
-        put 'test_connection'
-      end
-    end
-
-    put 'users/(:id)/test_mail', :to => 'users#test_mail', :as => 'test_mail_user'
-
-    resources :external_usergroups, :except => [:index, :new, :create, :show, :edit, :update, :destroy] do
-      member do
-        put 'refresh'
       end
     end
   end
@@ -395,6 +417,7 @@ Foreman::Application.routes.draw do
       resources :compute_resources do
         member do
           post 'template_selected'
+          post 'instance_type_selected'
           post 'cluster_selected'
           get 'resource_pools'
           post 'ping'
@@ -450,14 +473,17 @@ Foreman::Application.routes.draw do
 
   root :to => 'dashboard#index'
   get 'dashboard', :to => 'dashboard#index', :as => "dashboard"
-  get 'dashboard/auto_complete_search', :to => 'hosts#auto_complete_search', :as => "auto_complete_search_dashboards"
+  get 'dashboard/auto_complete_search', :to => 'hosts#auto_complete_search', :as => "auto_complete_search_dashboard"
   get 'status', :to => 'home#status', :as => "status"
 
   # get only for alterator unattended scripts
   get 'unattended/provision/:metadata', :controller => 'unattended', :action => 'host_template', :format => 'text',
     :constraints => { :metadata => /(autoinstall\.scm|vm-profile\.scm|pkg-groups\.tar)/ }
-  # get for end of build action
+  # built call can be done both via GET (for backward compatibility) and POST
   get 'unattended/built/(:id(:format))', :controller => 'unattended', :action => 'built', :format => 'text'
+  post 'unattended/built/(:id(:format))', :controller => 'unattended', :action => 'built', :format => 'text'
+  # failed call only via POST
+  post 'unattended/failed/(:id(:format))', :controller => 'unattended', :action => 'failed', :format => 'text'
   # get for all unattended scripts
   get 'unattended/(:kind/(:id(:format)))', :controller => 'unattended', :action => 'host_template', :format => 'text'
 
@@ -520,6 +546,11 @@ Foreman::Application.routes.draw do
   resources :notification_recipients, :only => [:index, :update, :destroy] do
     collection do
       put 'group/:group' => 'notification_recipients#update_group_as_read'
+      delete 'group/:group' => 'notification_recipients#destroy_group'
     end
+  end
+
+  if Rails.env.development? && defined?(::GraphiQL::Rails::Engine)
+    mount GraphiQL::Rails::Engine, at: '/graphiql', graphql_path: '/api/graphql'
   end
 end

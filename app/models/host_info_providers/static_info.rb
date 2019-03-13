@@ -5,7 +5,7 @@ module HostInfoProviders
       param = {}
 
       param["hostgroup"] = host.hostgroup.to_label unless host.hostgroup.nil?
-      param["comment"] = host.comment unless host.comment.blank?
+      param["comment"] = host.comment if host.comment.present?
 
       add_network_params param
       add_taxonomy_params param
@@ -14,7 +14,7 @@ module HostInfoProviders
       add_unattended_params param
 
       # Parse ERB values contained in the parameters
-      param = SafeRender.new(:variables => { :host => self }).parse(param)
+      param = ParameterSafeRender.new(self).render(param)
 
       { 'parameters' => param }
     end
@@ -29,7 +29,7 @@ module HostInfoProviders
 
     def add_login_params(param)
       owner = host.owner
-      return unless SETTINGS[:login] && owner
+      return unless owner
 
       param["owner_name"]  = owner.name
       param["owner_email"] = owner.is_a?(User) ? owner.mail : owner.users.map(&:mail)
@@ -44,8 +44,7 @@ module HostInfoProviders
     end
 
     def add_taxonomy_params(param)
-      Taxonomy.enabled_taxonomies.each do |taxonomy_type|
-        single_taxonomy = taxonomy_type.singularize
+      ['location', 'organization'].each do |single_taxonomy|
         tax_field = host.send(single_taxonomy)
         next unless tax_field.present?
 
@@ -62,7 +61,7 @@ module HostInfoProviders
     end
 
     def all_subnets
-      host.interfaces.map{ |i| [i.subnet, i.subnet6]}.flatten.compact
+      host.interfaces.map { |i| [i.subnet, i.subnet6]}.flatten.compact
     end
   end
 end

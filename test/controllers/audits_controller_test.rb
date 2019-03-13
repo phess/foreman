@@ -1,26 +1,15 @@
 require 'test_helper'
 
 class AuditsControllerTest < ActionController::TestCase
+  setup do
+    @factory_options = [:auditable_type => 'Architecture']
+  end
+
   basic_pagination_per_page_test
-  basic_pagination_rendered_test
 
   def test_index
-    get :index, {}, set_session_user
+    get :index, session: set_session_user
     assert_template 'index'
-  end
-
-  def test_show
-    get :show, {:id => Audit.first}, set_session_user
-    assert_response :success
-    assert_template 'show'
-  end
-
-  def test_show_diff
-    audit = FactoryGirl.create(:audit, :with_diff)
-    get :show, {:id => audit.id}, set_session_user
-    assert_response :success
-    assert_template 'show'
-    assert_template '_diff'
   end
 
   def setup_user
@@ -30,7 +19,7 @@ class AuditsControllerTest < ActionController::TestCase
 
   def user_with_viewer_rights_should_fail_to(edit_audit)
     setup_user
-    get :edit, {:id => Audit.first}
+    get :edit, params: { :id => Audit.first }
     assert @response.status == '403 Forbidden'
   end
 

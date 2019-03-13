@@ -29,7 +29,7 @@ class RoleLockTest < ActiveSupport::TestCase
     prefix = "Customized"
     new_name = "#{prefix} #{original_name} 1"
     taken_name = "#{prefix} #{original_name}"
-    FactoryGirl.create(:role, :name => taken_name)
+    FactoryBot.create(:role, :name => taken_name)
     refute find_role(new_name)
     @role_lock.rename_existing role, original_name
     assert find_role(new_name)
@@ -47,11 +47,12 @@ class RoleLockTest < ActiveSupport::TestCase
   test "should create plugin role" do
     name = "Test Manager"
     refute find_role(name)
-    @role_lock.create_plugin_role name, @permissions
+    @role_lock.create_plugin_role name, @permissions, 'some description'
     role = find_role(name)
     assert role
     assert_equal @permissions, role.permissions.pluck(:name).map(&:to_sym)
     assert_equal @role_lock.plugin_id, role.origin
+    assert_equal 'some description', role.description
     assert role.locked?
   end
 
@@ -122,5 +123,19 @@ class RoleLockTest < ActiveSupport::TestCase
     @role_lock.register_role name, @permissions, registry
     refute_empty registry.role_ids
     assert_equal Role.find(registry.role_ids.first).name, name
+  end
+
+  test "should update description of register role" do
+    name = "Test Manager"
+    registry = Foreman::Plugin::RbacRegistry.new
+    assert_empty registry.role_ids
+    @role_lock.register_role name, @permissions, registry
+    role = Role.find(registry.role_ids.first)
+    assert_equal role.name, name
+    assert_empty role.description
+
+    @role_lock.register_role name, @permissions, registry, 'new description'
+    role.reload
+    assert_equal 'new description', role.description
   end
 end

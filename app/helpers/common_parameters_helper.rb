@@ -6,13 +6,22 @@ module CommonParametersHelper
   end
 
   def parameters_title
-    _("Parameters that would be associated with hosts in this %s") % (type)
+    _("Parameters that would be associated with hosts in this %s") % type
   end
 
   def parameter_value_field(value)
     source_name = value[:source_name] ? "(#{value[:source_name]})" : nil
     popover_tag = popover('', _("<b>Source:</b> %{type} %{name}") % { :type => _(value[:source]), :name => html_escape(source_name) }, :data => { :placement => 'top' })
-    content_tag(:div, parameter_value_content("value_#{value[:safe_value]}", value[:safe_value], :popover => popover_tag, :disabled => true) + fullscreen_input, :class => 'input-group')
+    content_tag(
+      :div,
+      parameter_value_content(
+        "value_#{value[:safe_value]}",
+        Parameter.format_value_before_type_cast(value[:safe_value], value[:parameter_type]),
+        :hidden_value? => value[:hidden_value?],
+        :popover => popover_tag, :disabled => true
+      ) + fullscreen_input,
+      :class => 'input-group'
+    )
   end
 
   def parameter_value_content(id, value, options)
@@ -40,14 +49,13 @@ module CommonParametersHelper
                                              :class => html_class,
                                              :rows => 1,
                                              :id => dom_id(f.object) + '_value',
-                                             :placeholder => _("Value")))
+                                             :placeholder => _("Value"),
+                                             :value => f.object.value_before_type_cast))
 
     input_group(input, input_group_btn(hidden_toggle(f.object.hidden_value?), fullscreen_button("$(this).closest('.input-group').find('input,textarea')")))
   end
 
   def lookup_key_field(id, value, options)
-    lookup_key = options[:lookup_key]
-
     option_hash = { :rows => 1,
                     :class => 'form-control no-stretch',
                     :'data-property' => 'value',
@@ -55,8 +63,7 @@ module CommonParametersHelper
                     :'data-inherited-value' => options[:inherited_value],
                     :name => options[:name].to_s,
                     :disabled => options[:disabled] }
-
-    option_hash[:class] += " masked-input" if lookup_key.present? && options[:lookup_key_hidden_value?]
+    option_hash[:class] += " masked-input" if options[:hidden_value?]
 
     case options[:lookup_key_type]
     when "boolean"
@@ -68,11 +75,34 @@ module CommonParametersHelper
     end
   end
 
-  def authorized_resource_parameters(resource, type)
-    parameters_by_type = resource.send(type)
-    parameter_ids_to_view = parameters_by_type.authorized(:view_params).map(&:id)
+  def authorized_resource_parameters(params_authorizer, parameters_by_type)
+    unless params_authorizer.is_a?(Authorizer)
+      Foreman::Deprecation.deprecation_warning(
+        '1.23',
+        "definition changed for method 'authorized_resource_parameters'."\
+        'New definition accepts Authorizer object & parameters collection as arguments.'\
+        'resource and type arguments are deprecated.'\
+        'Please modify method calling as per new definition.'
+      )
+      # Assigning old parameter names and guess new parameters
+      resource = params_authorizer
+      type = parameters_by_type
+      parameters_by_type = resource.send(type)
+      params_authorizer = Authorizer.new(User.current, :collection => parameters_by_type)
+    end
+    parameter_ids_to_view = find_parameters_to_view(params_authorizer, parameters_by_type).map(&:id)
     resource_parameters = parameters_by_type.select { |p| parameter_ids_to_view.include?(p.id) }
     resource_parameters += parameters_by_type.select(&:new_record?)
     resource_parameters
+  end
+
+  def find_parameters_to_view(params_authorizer, parameters_by_type, user = User.current)
+    return parameters_by_type.none if user.nil?
+    return parameters_by_type.where(nil) if user.admin?
+    params_authorizer.find_collection(parameters_by_type.klass, :permission => :view_params)
+  end
+
+  def can_create_parameter?(params_authorizer)
+    @can_create_param ||= params_authorizer.can?(:create_params)
   end
 end

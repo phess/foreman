@@ -2,8 +2,8 @@ require 'test_helper'
 
 class DashboardTest < ActiveSupport::TestCase
   setup do
-    @env = FactoryGirl.create(:environment)
-    @host = FactoryGirl.create(:host, :with_reports, :environment => @env)
+    @env = FactoryBot.build(:environment)
+    @host = FactoryBot.create(:host, :with_reports, :environment => @env)
   end
 
   test 'hosts returns correct host' do
@@ -85,7 +85,7 @@ class DashboardTest < ActiveSupport::TestCase
 
     test 'latest_events does not fail on ambiguous column name host_id' do
       data = Dashboard::Data.new
-      #instead of going through the authorizer, force a join that will cause ambiguity.
+      # instead of going through the authorizer, force a join that will cause ambiguity.
       ConfigReport.expects(:authorized).with(:view_config_reports).returns(ConfigReport.joins(:host => :interfaces))
       as_admin do
         assert_equal 1, data.latest_events.length

@@ -21,10 +21,10 @@ class HostBuildStatus
   def host_status
     return if host.valid?
     host.errors.full_messages.each do |error|
-      fail!(:host, error.to_s, host.to_label)
+      fail!(:host, error.to_s, host.to_param)
     end
   rescue => error
-    fail!(:host, _('Failed to validate %{host}: %{error}') % {:host => host, :error => error.to_s}, host.to_label)
+    fail!(:host, _('Failed to validate %{host}: %{error}') % {:host => host, :error => error.to_s}, host.to_param)
   end
 
   def templates_status
@@ -33,11 +33,11 @@ class HostBuildStatus
     available_template_kinds.each do |template|
       begin
         Rails.logger.info "Rendering #{template}"
-        valid_template = host.render_template(template)
-        fail!(:templates, _('Template %s is empty.') % template.name, template.name) if valid_template.blank?
+        valid_template = host.render_template(template: template)
+        fail!(:templates, _('Template %s is empty.') % template.name, template.to_param) if valid_template.blank?
       rescue => exception
         Foreman::Logging.exception("Review template error", exception)
-        fail!(:templates, _('Failure parsing %{template}: %{error}.') % {:template => template.name, :error => exception}, template.name)
+        fail!(:templates, _('Failure parsing %{template}: %{error}.') % {:template => template.name, :error => exception}, template.to_param)
       end
     end
   end
@@ -47,11 +47,12 @@ class HostBuildStatus
 
     smart_proxies.each do |proxy|
       begin
-        errors = proxy.refresh.messages.any?
+        proxy.ping
+        errors = proxy.errors.messages
         errors = errors.is_a?(Array) ? errors.to_sentence : errors
-        fail!(:proxies, _('Failure deploying via smart proxy %{proxy}: %{error}.') % {:proxy => proxy, :error => errors}, proxy.id) if errors
+        fail!(:proxies, _('Failure deploying via smart proxy %{proxy}: %{error}.') % {:proxy => proxy, :error => errors}, proxy.to_param) if proxy.errors.any?
       rescue => error
-        fail!(:proxies, _('Error connecting to %{proxy}: %{error}.') % {:proxy => proxy, :error => error}, proxy.id)
+        fail!(:proxies, _('Error connecting to %{proxy}: %{error}.') % {:proxy => proxy, :error => error}, proxy.to_param)
       end
     end
   end

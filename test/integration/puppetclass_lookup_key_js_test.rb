@@ -4,7 +4,10 @@ class PuppetclassLookupKeyJSTest < IntegrationTestWithJavascript
   # intermittent failures:
   #   PuppetclassLookupKeyJSTest.test_0001_can hide value when overriden
   #   PuppetclassLookupKeyJSTest.test_0002_uncheck override
-  extend Minitest::OptionalRetry
+
+  test "index page" do
+    assert_index_page(puppetclass_lookup_keys_path, "Smart Class Parameters", false)
+  end
 
   test 'can hide value when overriden' do
     visit puppetclass_lookup_keys_path
@@ -56,5 +59,16 @@ class PuppetclassLookupKeyJSTest < IntegrationTestWithJavascript
     end
 
     assert page.find("#puppetclass_lookup_key_hidden_value").checked?
+  end
+
+  test "edit page" do
+    visit puppetclass_lookup_keys_path
+    within(:xpath, "//table") do
+      click_link "ssl"
+    end
+    fill_in "puppetclass_lookup_key_description", :with => "test"
+    fill_in "puppetclass_lookup_key_default_value", :with => "false"
+    assert_submit_button(puppetclass_lookup_keys_path)
+    assert page.has_link? 'ssl'
   end
 end

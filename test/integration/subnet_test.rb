@@ -1,10 +1,6 @@
 require 'integration_test_helper'
 
 class SubnetIntegrationTest < ActionDispatch::IntegrationTest
-  test "index page" do
-    assert_index_page(subnets_path,"Subnets","Create Subnet")
-  end
-
   test "edit page" do
     visit subnets_path
     click_link "one"
@@ -16,7 +12,7 @@ class SubnetIntegrationTest < ActionDispatch::IntegrationTest
   end
 
   test 'edit shows errors on invalid name for parameters values' do
-    subnet = FactoryGirl.create(:subnet_ipv4)
+    subnet = FactoryBot.create(:subnet_ipv4)
     subnet.subnet_parameters.create!(:name => "foo_param", :value => "bar", :hidden_value => true)
     visit edit_subnet_path(subnet)
     assert page.has_link?('Parameters', :href => '#params')

@@ -1,26 +1,41 @@
 module Foreman
   module HTTPProxy
     def http_proxy
-      Setting[:http_proxy]
+      ActiveRecord::Base.connection_pool.with_connection do
+        Setting[:http_proxy]
+      end
     end
 
     def http_proxy_except_list
-      Setting[:http_proxy_except_list]
+      ActiveRecord::Base.connection_pool.with_connection do
+        Setting[:http_proxy_except_list]
+      end
     end
 
+    # Answers if this request should be proxied
     def proxy_http_request?(current_proxy, request_host, schema)
-      !http_proxy.nil? && current_proxy.nil? && !request_host.nil? &&
+      !http_proxy.nil? &&
+      current_proxy.nil? &&
+      !request_host.nil? &&
       http_request?(schema) &&
-      http_proxy_host?(request_host)
+      http_proxy_host?(request_host) &&
+      !local_request?(request_host)
     end
 
     def http_proxied_rescue(&block)
       yield
     rescue => e
-      raise e, _("Proxied request failed with: %s") % e, e.backtrace
+      raise e, _("Proxied request failed with: %s\n%s") % [e, e&.backtrace&.join("\n")]
     end
 
     private
+
+    def local_request?(request_host)
+      request_host.starts_with?('127.') ||
+      request_host == 'localhost' ||
+      request_host == '::1' ||
+      request_host == SETTINGS[:fqdn]
+    end
 
     def http_request?(schema)
       ['http', 'https'].include?(schema)
@@ -31,12 +46,12 @@ module Foreman
       !http_host_excepted_by_wildcard?(request_host)
     end
 
-    def logger
+    def foreman_logger
       Foreman::Logging.logger('app')
     end
 
     def log_proxied_request(current_proxy, requested_host)
-      logger.info "Proxying request to #{requested_host} via #{current_proxy}"
+      foreman_logger.info "Proxying request to #{requested_host} via #{current_proxy}"
     end
 
     def http_host_excepted_by_wildcard?(host)
@@ -50,6 +65,6 @@ module Foreman
   end
 end
 
-require_dependency File.expand_path('../http_proxy/excon_connection_extension', __FILE__)
-require_dependency File.expand_path('../http_proxy/net_http_extension', __FILE__)
-require_dependency File.expand_path('../http_proxy/rest_client_extension', __FILE__)
+require_dependency File.expand_path('http_proxy/excon_connection_extension', __dir__)
+require_dependency File.expand_path('http_proxy/net_http_extension', __dir__)
+require_dependency File.expand_path('http_proxy/rest_client_extension', __dir__)

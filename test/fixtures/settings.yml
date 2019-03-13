@@ -1,3 +1,4 @@
+---
 attributes1:
   name: administrator
   settings_type: string
@@ -45,11 +46,6 @@ attributes9:
   category: Setting::Puppet
   default: production
   description: "The Setting::Puppet environment foreman would default to in case it can't auto detect it"
-attributes10:
-  name: modulepath
-  category: Setting::Puppet
-  default: /etc/puppet/modules
-  description: "The Setting::Puppet default module path in case that Foreman can't auto detect it"
 attributes12:
   name: puppet_server
   category: Setting::Puppet
@@ -151,15 +147,10 @@ attribute31:
   default: "SSL_CLIENT_CERT"
   description: "Environment variable containing a client SSL certificate"
 attribute32:
-  name: trusted_puppetmaster_hosts
+  name: trusted_hosts
   category: Setting::Auth
   default: []
   description: "Hosts that will be trusted in addition to Smart Proxies for access to fact/report importers and ENC output"
-attribute33:
-  name: use_gravatar
-  category: Setting::General
-  default: "true"
-  description: "Should Foreman use gravatar to display user icons"
 attribute36:
   name: puppetrun
   category: Setting::Puppet
@@ -175,11 +166,6 @@ attribute38:
   category: Setting::Provisioning
   default: "true"
   description: "Should we use the originating IP of the built request to update the Host's IP?"
-attribute39:
-  name: legacy_puppet_hostname
-  category: Setting::Puppet
-  default: "false"
-  description: "Foreman will truncate hostname to 'puppet' if it starts with puppet"
 attribute40:
   name: interpolate_erb_in_parameters
   category: Setting::Puppet
@@ -274,7 +260,7 @@ attributes57:
 attributes58:
   name: ignored_interface_identifiers
   category: Setting::Provisioning
-  default: "['lo', 'usb*', 'vnet*', 'macvtap*']"
+  default: "['lo', 'en*v*', 'usb*', 'vnet*', 'macvtap*', '_vdsmdummy_', 'veth*', 'docker*', 'tap*', 'qbr*', 'qvb*', 'qvo*', 'qr-*', 'qg-*', 'vlinuxbr*', 'vovsbr*']"
   description: 'Ignore interfaces that match these values during facts importing, you can use * wildcard to match names with indexes e.g. macvtap*'
 attributes59:
   name: always_show_configuration_status
@@ -353,3 +339,58 @@ attribute73:
   category: Setting::Provisioning
   default: PXELinux default local boot
   description: 'Set up default local boot template for PXELinux'
+attribute74:
+  name: rss_enable
+  category: Setting::Notification
+  default: true
+  description: 'Whether to enable or not RSS feed notifications'
+attribute75:
+  name: rss_url
+  category: Setting::Notification
+  default: "http://theforeman.org/feed.xml"
+  description: 'Default URL for RSS feed notifications'
+attribute76:
+  name: default_pxe_item_global
+  category: Setting::Provisioning
+  default: nil
+  description: 'Default PXE global template entry'
+attribute77:
+  name: default_pxe_item_local
+  category: Setting::Provisioning
+  default: nil
+  description: 'Default PXE local template entry'
+attributes78:
+  name: excluded_facts
+  category: Setting::Provisioning
+  default: "['lo', 'en*v*', 'usb*', 'vnet*', 'macvtap*', '_vdsmdummy_', 'veth*', 'docker*', 'tap*', 'qbr*', 'qvb*', 'qvo*', 'qr-*', 'qg-*', 'vlinuxbr*', 'vovsbr*']"
+  description: 'Ignore fact names that match these values during facts importing, you can use * wildcard to match names with indexes e.g. macvtap*'
+attribute79:
+  name: append_domain_name_for_hosts
+  category: Setting::General
+  default: "true"
+  description: "Should append domain names when new hosts are provisioned"
+attribute80:
+  name: failed_login_attempts_limit
+  category: Setting::Auth
+  default: 30
+  description: "Foreman will block user login after this number of failed login attempts for 5 minutes from offending IP address. Set to 0 to disable bruteforce protection"
+attribute81:
+  name: login_text
+  category: Setting::General
+  default: "--- \n"
+  description: 'Text to be shown in the login-page footer'
+attribute82:
+  name: ssh_timeout
+  category: Setting::Provisioning
+  default: 120
+  description: 'Time in seconds before SSH provisioning times out'
+attribute82:
+  name: destroy_vm_on_host_delete
+  category: Setting::Provisioning
+  default: true
+  description: 'Destroy associated VM on host delete. When enabled, VMs linked to Hosts will be deleted on Compute Resource, meaning they can be re-associated or imported back to Foreman again. This does not automatically power off the VM'
+attribute83:
+  name: intermediate_ipxe_script
+  category: Setting::Provisioning
+  default: nil
+  description: 'Intermidiate iPXE script'

@@ -1,9 +1,8 @@
-# encoding: utf-8
 require 'test_helper'
 
 class AuthSourceLdapTest < ActiveSupport::TestCase
   def setup
-    @auth_source_ldap = FactoryGirl.create(:auth_source_ldap)
+    @auth_source_ldap = FactoryBot.create(:auth_source_ldap)
     User.current = users(:admin)
   end
 
@@ -17,12 +16,12 @@ class AuthSourceLdapTest < ActiveSupport::TestCase
   should allow_value('').for(:ldap_filter)
   should allow_value('    ').for(:ldap_filter)
   should allow_value('key=value').for(:ldap_filter)
+  should allow_value("key=#{'a' * 256}").for(:ldap_filter)
   should validate_length_of(:name).is_at_most(60)
   should validate_length_of(:host).is_at_most(60)
   should validate_length_of(:account_password).is_at_most(60)
   should validate_length_of(:account).is_at_most(255)
   should validate_length_of(:base_dn).is_at_most(255)
-  should validate_length_of(:ldap_filter).is_at_most(255)
   should validate_length_of(:attr_login).is_at_most(30)
   should validate_length_of(:attr_firstname).is_at_most(30)
   should validate_length_of(:attr_lastname).is_at_most(30)
@@ -46,6 +45,14 @@ class AuthSourceLdapTest < ActiveSupport::TestCase
     assert_equal "following spaces", @auth_source_ldap.attr_firstname
     assert_equal "following spaces", @auth_source_ldap.attr_lastname
     assert_equal "following spaces", @auth_source_ldap.attr_mail
+  end
+
+  test "it enforces use_netgroups to false for active directory" do
+    @auth_source_ldap.use_netgroups = true
+    @auth_source_ldap.server_type = :active_directory
+
+    assert @auth_source_ldap.valid?
+    refute @auth_source_ldap.use_netgroups
   end
 
   test "return nil if login is blank or password is blank" do
@@ -93,15 +100,15 @@ class AuthSourceLdapTest < ActiveSupport::TestCase
 
     test 'update_usergroups calls refresh_ldap if entry belongs to some group' do
       @auth_source_ldap.expects(:valid_group?).with('ipausers').returns(true)
-      FactoryGirl.create(:external_usergroup, :name => 'ipausers', :auth_source => @auth_source_ldap)
+      FactoryBot.create(:external_usergroup, :name => 'ipausers', :auth_source => @auth_source_ldap)
       ExternalUsergroup.any_instance.expects(:refresh)
       @auth_source_ldap.send(:update_usergroups, 'test')
     end
 
     test 'update_usergroups matches LDAP gids with external user groups case insensitively' do
       @auth_source_ldap.expects(:valid_group?).with('IPAUSERS').returns(true)
-      external = FactoryGirl.create(:external_usergroup, :auth_source => @auth_source_ldap, :name => 'IPAUSERS')
-      ldap_user = FactoryGirl.create(:user, :login => 'JohnSmith', :mail => 'a@b.com', :auth_source => @auth_source_ldap)
+      external = FactoryBot.create(:external_usergroup, :auth_source => @auth_source_ldap, :name => 'IPAUSERS')
+      ldap_user = FactoryBot.create(:user, :login => 'JohnSmith', :mail => 'a@b.com', :auth_source => @auth_source_ldap)
       AuthSourceLdap.any_instance.expects(:users_in_group).with('IPAUSERS').returns(['JohnSmith'])
       @auth_source_ldap.send(:update_usergroups, 'test')
       assert_include ldap_user.usergroups, external.usergroup
@@ -109,65 +116,65 @@ class AuthSourceLdapTest < ActiveSupport::TestCase
 
     test 'update_usergroups refreshes on all external user groups, in LDAP and in Foreman auth source' do
       @auth_source_ldap.expects(:valid_group?).with('new external group').returns(true)
-      external = FactoryGirl.create(:external_usergroup, :name => 'new external group', :auth_source => @auth_source_ldap)
+      external = FactoryBot.create(:external_usergroup, :name => 'new external group', :auth_source => @auth_source_ldap)
       User.any_instance.expects(:external_usergroups).returns([external])
       @auth_source_ldap.send(:update_usergroups, 'test')
     end
   end
 
   test 'update_usergroups is no-op with $login service account' do
-    ldap = FactoryGirl.build(:auth_source_ldap, :account => 'DOMAIN/$login')
+    ldap = FactoryBot.build_stubbed(:auth_source_ldap, :account => 'DOMAIN/$login')
     User.any_instance.expects(:external_usergroups).never
     ExternalUsergroup.any_instance.expects(:refresh).never
     ldap.send(:update_usergroups, 'test')
   end
 
   test 'update_usergroups is no-op with usergroup_sync=false' do
-    ldap = FactoryGirl.build(:auth_source_ldap, :usergroup_sync => false)
+    ldap = FactoryBot.build_stubbed(:auth_source_ldap, :usergroup_sync => false)
     User.any_instance.expects(:external_usergroups).never
     ExternalUsergroup.any_instance.expects(:refresh).never
     ldap.send(:update_usergroups, 'test')
   end
 
   test '#to_config with dedicated service account returns hash' do
-    conf = FactoryGirl.build(:auth_source_ldap, :service_account).to_config
+    conf = FactoryBot.build_stubbed(:auth_source_ldap, :service_account).to_config
     assert_kind_of Hash, conf
     refute conf[:anon_queries]
   end
 
   test '#to_config with $login service account and no username fails' do
-    ldap = FactoryGirl.build(:auth_source_ldap, :account => 'DOMAIN/$login')
+    ldap = FactoryBot.build_stubbed(:auth_source_ldap, :account => 'DOMAIN/$login')
     assert_raise(Foreman::Exception) { ldap.to_config }
   end
 
   test '#to_config with $login service account and username returns hash with service user' do
-    conf = FactoryGirl.build(:auth_source_ldap, :account => 'DOMAIN/$login').to_config('user', 'pass')
+    conf = FactoryBot.build_stubbed(:auth_source_ldap, :account => 'DOMAIN/$login').to_config('user', 'pass')
     assert_kind_of Hash, conf
     refute conf[:anon_queries]
     assert_equal 'DOMAIN/user', conf[:service_user]
   end
 
   test '#to_config with no service account returns hash with anonymous queries' do
-    conf = FactoryGirl.build(:auth_source_ldap).to_config('user', 'pass')
+    conf = FactoryBot.build_stubbed(:auth_source_ldap).to_config('user', 'pass')
     assert_kind_of Hash, conf
     assert conf[:anon_queries]
   end
 
   test '#to_config keeps encryption nil if tls is not used' do
     AuthSourceLdap.any_instance.stubs(:tls => false)
-    conf = FactoryGirl.build(:auth_source_ldap).to_config('user', 'pass')
+    conf = FactoryBot.build_stubbed(:auth_source_ldap).to_config('user', 'pass')
     assert_nil conf[:encryption]
   end
 
   test '#to_config enforces verify_mode peer for tls' do
     AuthSourceLdap.any_instance.stubs(:tls => true)
-    conf = FactoryGirl.build(:auth_source_ldap).to_config('user', 'pass')
+    conf = FactoryBot.build_stubbed(:auth_source_ldap).to_config('user', 'pass')
     assert_kind_of Hash, conf[:encryption]
     assert_equal OpenSSL::SSL::VERIFY_PEER, conf[:encryption][:tls_options][:verify_mode]
   end
 
   test '#ldap_con does not cache connections with user auth' do
-    ldap = FactoryGirl.build(:auth_source_ldap, :account => 'DOMAIN/$login')
+    ldap = FactoryBot.build_stubbed(:auth_source_ldap, :account => 'DOMAIN/$login')
     refute_equal ldap.ldap_con('user', 'pass'), ldap.ldap_con('user', 'pass')
   end
 
@@ -190,13 +197,13 @@ class AuthSourceLdapTest < ActiveSupport::TestCase
     end
 
     test "account_password is stored encrypted" do
-      auth_source = FactoryGirl.create(:auth_source_ldap, :account_password => 'fakepass')
+      auth_source = FactoryBot.create(:auth_source_ldap, :account_password => 'fakepass')
       assert auth_source.is_decryptable?(auth_source.account_password_in_db)
     end
   end
 
   context 'save external avatar' do
-    let(:temp_dir){Dir.mktmpdir}
+    let(:temp_dir) {Dir.mktmpdir}
 
     setup do
       AuthSourceLdap.any_instance.stubs(:avatar_path).returns(temp_dir)
@@ -242,7 +249,7 @@ class AuthSourceLdapTest < ActiveSupport::TestCase
   def setup_ldap_stubs(givenname = 'test')
     # stub out all the LDAP connectivity
     entry = Net::LDAP::Entry.new
-    {:givenname=>[givenname], :dn=>["uid=test123,cn=users,cn=accounts,dc=example,dc=com"], :mail=>["test123@example.com"], :sn=>["test"]}.each do |k, v|
+    {:givenname => [givenname], :dn => ["uid=test123,cn=users,cn=accounts,dc=example,dc=com"], :mail => ["test123@example.com"], :sn => ["test"]}.each do |k, v|
       entry[k] = v.map { |e| e.encode('UTF-8').force_encoding('ASCII-8BIT') }
     end
     LdapFluff.any_instance.stubs(:valid_user?).returns(true)
